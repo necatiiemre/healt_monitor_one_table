@@ -78,6 +78,13 @@ static inline uint32_t parse_4byte_be(const uint8_t *data)
            ((uint32_t)data[2] << 8)  | (uint32_t)data[3];
 }
 
+static inline uint64_t parse_5byte_be(const uint8_t *data)
+{
+    return ((uint64_t)data[0] << 32) | ((uint64_t)data[1] << 24) |
+           ((uint64_t)data[2] << 16) | ((uint64_t)data[3] << 8) |
+           (uint64_t)data[4];
+}
+
 static inline uint64_t parse_6byte_be(const uint8_t *data)
 {
     return ((uint64_t)data[0] << 40) | ((uint64_t)data[1] << 32) |
@@ -91,32 +98,52 @@ static inline uint64_t parse_6byte_be(const uint8_t *data)
 
 static void parse_device_header(const uint8_t *udp_payload, struct health_device_info *dev)
 {
-    dev->device_id       = parse_2byte_be(udp_payload + DEV_OFF_DEVICE_ID);
-    dev->operation_type  = udp_payload[DEV_OFF_OPERATION_TYPE];
-    dev->config_type     = udp_payload[DEV_OFF_CONFIG_TYPE];
-    dev->frame_length    = parse_2byte_be(udp_payload + DEV_OFF_FRAME_LENGTH);
-    dev->status_enable   = udp_payload[DEV_OFF_STATUS_ENABLE];
-    dev->tx_total_count  = parse_6byte_be(udp_payload + DEV_OFF_TX_TOTAL_COUNT);
-    dev->rx_total_count  = parse_6byte_be(udp_payload + DEV_OFF_RX_TOTAL_COUNT);
-    dev->port_count      = udp_payload[DEV_OFF_PORT_COUNT];
-    dev->sw_mode         = udp_payload[DEV_OFF_SW_MODE];
+    dev->device_id          = parse_2byte_be(udp_payload + DEV_OFF_DEVICE_ID);
+    dev->operation_type     = udp_payload[DEV_OFF_OPERATION_TYPE];
+    dev->config_type        = udp_payload[DEV_OFF_CONFIG_TYPE];
+    dev->frame_length       = parse_2byte_be(udp_payload + DEV_OFF_FRAME_LENGTH);
+    dev->status_enable      = udp_payload[DEV_OFF_STATUS_ENABLE];
+    dev->status_addr        = parse_2byte_be(udp_payload + DEV_OFF_STATUS_ADDR);
+    dev->tx_total_count     = parse_6byte_be(udp_payload + DEV_OFF_TX_TOTAL_COUNT);
+    dev->rx_total_count     = parse_6byte_be(udp_payload + DEV_OFF_RX_TOTAL_COUNT);
+    dev->tx_err_total_count = parse_6byte_be(udp_payload + DEV_OFF_TX_ERR_TOTAL_COUNT);
+    dev->rx_err_total_count = parse_6byte_be(udp_payload + DEV_OFF_RX_ERR_TOTAL_COUNT);
+    dev->heartbeat          = udp_payload[DEV_OFF_HEARTBEAT];
+    dev->device_id2         = parse_2byte_be(udp_payload + DEV_OFF_DEV_ID2);
+    dev->port_count         = udp_payload[DEV_OFF_PORT_COUNT];
+    dev->token_bucket_status = udp_payload[DEV_OFF_TOKEN_BUCKET];
+    dev->sw_mode            = udp_payload[DEV_OFF_SW_MODE];
+    dev->vendor_id          = udp_payload[DEV_OFF_VENDOR_ID];
+    dev->auto_mac_update    = udp_payload[DEV_OFF_AUTO_MAC_UPDATE];
+    dev->upstream_mode      = udp_payload[DEV_OFF_UPSTREAM_MODE];
 
-    // Firmware version: bytes 48, 49, 50 (last 3 bytes of 6-byte field)
-    dev->fw_major = udp_payload[DEV_OFF_FW_VERSION + 3];
-    dev->fw_minor = udp_payload[DEV_OFF_FW_VERSION + 4];
-    dev->fw_patch = udp_payload[DEV_OFF_FW_VERSION + 5];
+    // SW IP core version (last 3 bytes of 6-byte field)
+    dev->sw_ip_major = udp_payload[DEV_OFF_SW_IP_CORE_VER + 3];
+    dev->sw_ip_minor = udp_payload[DEV_OFF_SW_IP_CORE_VER + 4];
+    dev->sw_ip_patch = udp_payload[DEV_OFF_SW_IP_CORE_VER + 5];
 
-    // Embedded ES firmware version: bytes 54, 55, 56
-    dev->es_fw_major = udp_payload[DEV_OFF_ES_FW_VERSION + 3];
-    dev->es_fw_minor = udp_payload[DEV_OFF_ES_FW_VERSION + 4];
-    dev->es_fw_patch = udp_payload[DEV_OFF_ES_FW_VERSION + 5];
+    // ES IP core version (last 3 bytes of 6-byte field)
+    dev->es_ip_major = udp_payload[DEV_OFF_ES_IP_CORE_VER + 3];
+    dev->es_ip_minor = udp_payload[DEV_OFF_ES_IP_CORE_VER + 4];
+    dev->es_ip_patch = udp_payload[DEV_OFF_ES_IP_CORE_VER + 5];
 
-    dev->egi_time_sec   = parse_4byte_be(udp_payload + DEV_OFF_EGI_TIME_SEC);
-    dev->power_up_time  = parse_4byte_be(udp_payload + DEV_OFF_POWER_UP_TIME);
-    dev->instant_time   = parse_4byte_be(udp_payload + DEV_OFF_INSTANT_TIME);
-    dev->fpga_temp      = parse_2byte_be(udp_payload + DEV_OFF_FPGA_TEMP);
-    dev->fpga_voltage   = parse_2byte_be(udp_payload + DEV_OFF_FPGA_VOLTAGE);
-    dev->config_id      = parse_2byte_be(udp_payload + DEV_OFF_CONFIG_ID);
+    dev->sw_input_fifo_size  = parse_2byte_be(udp_payload + DEV_OFF_SW_INPUT_FIFO);
+    dev->pkt_pro_fifo_size   = parse_2byte_be(udp_payload + DEV_OFF_PKT_PRO_FIFO);
+    dev->sw_output_fifo_size = parse_2byte_be(udp_payload + DEV_OFF_SW_OUTPUT_FIFO);
+    dev->hp_fifo_size        = parse_2byte_be(udp_payload + DEV_OFF_HP_FIFO_SIZE);
+    dev->lp_fifo_size        = parse_2byte_be(udp_payload + DEV_OFF_LP_FIFO_SIZE);
+    dev->be_fifo_size        = parse_2byte_be(udp_payload + DEV_OFF_BE_FIFO_SIZE);
+
+    dev->tod_ns              = parse_5byte_be(udp_payload + DEV_OFF_TOD_NS);
+    dev->tod_sec             = parse_5byte_be(udp_payload + DEV_OFF_TOD_SEC);
+
+    dev->eth_wrong_dev_cnt   = parse_6byte_be(udp_payload + DEV_OFF_ETH_WRONG_DEV_CNT);
+    dev->eth_wrong_op_cnt    = parse_6byte_be(udp_payload + DEV_OFF_ETH_WRONG_OP_CNT);
+    dev->eth_wrong_type_cnt  = parse_6byte_be(udp_payload + DEV_OFF_ETH_WRONG_TYPE_CNT);
+
+    dev->fpga_voltage        = parse_2byte_be(udp_payload + DEV_OFF_FPGA_VOLTAGE);
+    dev->fpga_temp           = parse_2byte_be(udp_payload + DEV_OFF_FPGA_TEMP);
+    dev->config_id           = parse_2byte_be(udp_payload + DEV_OFF_CONFIG_ID);
 }
 
 // ==========================================
@@ -128,31 +155,80 @@ static void parse_port_data(const uint8_t *port_data, struct health_port_info *p
     port->port_number        = parse_2byte_be(port_data + PORT_OFF_PORT_NUMBER);
     port->bit_status         = port_data[PORT_OFF_BIT_STATUS];
     port->crc_err_count      = parse_6byte_be(port_data + PORT_OFF_CRC_ERR_CNT);
+    port->ali_err_count      = parse_6byte_be(port_data + PORT_OFF_ALI_ERR_CNT);
+    port->len_exc_64         = parse_6byte_be(port_data + PORT_OFF_LEN_EXC_64);
+    port->len_exc_1518       = parse_6byte_be(port_data + PORT_OFF_LEN_EXC_1518);
     port->min_vl_frame_err   = parse_6byte_be(port_data + PORT_OFF_MIN_VL_FRAME_ERR);
     port->max_vl_frame_err   = parse_6byte_be(port_data + PORT_OFF_MAX_VL_FRAME_ERR);
+    port->inp_port_terr_cnt  = parse_6byte_be(port_data + PORT_OFF_INP_PORT_TERR_CNT);
     port->traffic_policy_drop = parse_6byte_be(port_data + PORT_OFF_TRAFFIC_POLICY_DROP);
     port->be_count           = parse_6byte_be(port_data + PORT_OFF_BE_COUNT);
     port->tx_count           = parse_6byte_be(port_data + PORT_OFF_TX_COUNT);
     port->rx_count           = parse_6byte_be(port_data + PORT_OFF_RX_COUNT);
     port->vl_source_err      = parse_6byte_be(port_data + PORT_OFF_VL_SOURCE_ERR);
     port->max_delay_err      = parse_6byte_be(port_data + PORT_OFF_MAX_DELAY_ERR);
+    port->queue_overflow     = parse_6byte_be(port_data + PORT_OFF_QUEUE_OVERFLOW);
     port->vlid_drop_count    = parse_6byte_be(port_data + PORT_OFF_VLID_DROP);
     port->undef_mac_count    = parse_6byte_be(port_data + PORT_OFF_UNDEF_MAC);
     port->hp_queue_overflow  = parse_6byte_be(port_data + PORT_OFF_HP_QUEUE_OVERFLOW);
     port->lp_queue_overflow  = parse_6byte_be(port_data + PORT_OFF_LP_QUEUE_OVERFLOW);
     port->be_queue_overflow  = parse_6byte_be(port_data + PORT_OFF_BE_QUEUE_OVERFLOW);
+    port->max_delay_param    = parse_6byte_be(port_data + PORT_OFF_MAX_DELAY_PARAM);
+    port->port_speed         = parse_6byte_be(port_data + PORT_OFF_PORT_SPEED);
     port->valid = true;
 }
 
 // ==========================================
-// RESPONSE PARSING
+// MCU DATA PARSING
+// ==========================================
+
+static void parse_mcu_data(const uint8_t *udp_payload, struct health_mcu_info *mcu)
+{
+    // Header
+    mcu->device_id      = parse_2byte_be(udp_payload + MCU_OFF_DEVICE_ID);
+    mcu->operation_type = udp_payload[MCU_OFF_OPERATION_TYPE];
+    mcu->config_type    = udp_payload[MCU_OFF_CONFIG_TYPE];
+    mcu->frame_length   = parse_2byte_be(udp_payload + MCU_OFF_FRAME_LENGTH);
+    mcu->status_enable  = udp_payload[MCU_OFF_STATUS_ENABLE];
+    mcu->fw_major       = udp_payload[MCU_OFF_FW_VERSION];
+    mcu->fw_minor       = udp_payload[MCU_OFF_FW_VERSION + 1];
+    mcu->comp_stat      = udp_payload[MCU_OFF_COMP_STAT];
+    mcu->comp_status    = parse_2byte_be(udp_payload + MCU_OFF_COMP_STATUS);
+
+    // Voltage & current data pairs (raw / 1000)
+    mcu->volt_12v      = parse_2byte_be(udp_payload + MCU_OFF_VOLT_12V);
+    mcu->curr_12v      = parse_2byte_be(udp_payload + MCU_OFF_CURR_12V);
+    mcu->volt_3v3      = parse_2byte_be(udp_payload + MCU_OFF_VOLT_3V3);
+    mcu->curr_3v3      = parse_2byte_be(udp_payload + MCU_OFF_CURR_3V3);
+    mcu->volt_1v8      = parse_2byte_be(udp_payload + MCU_OFF_VOLT_1V8);
+    mcu->curr_1v8      = parse_2byte_be(udp_payload + MCU_OFF_CURR_1V8);
+    mcu->volt_3v3_fo   = parse_2byte_be(udp_payload + MCU_OFF_VOLT_3V3_FO);
+    mcu->curr_3v3_fo   = parse_2byte_be(udp_payload + MCU_OFF_CURR_3V3_FO);
+    mcu->curr_1v3      = parse_2byte_be(udp_payload + MCU_OFF_CURR_1V3);
+    mcu->volt_1v3      = parse_2byte_be(udp_payload + MCU_OFF_VOLT_1V3);
+    mcu->curr_1v0_mgr  = parse_2byte_be(udp_payload + MCU_OFF_CURR_1V0_MGR);
+    mcu->volt_1v0_mgr  = parse_2byte_be(udp_payload + MCU_OFF_VOLT_1V0_MGR);
+    mcu->volt_1v0_ast  = parse_2byte_be(udp_payload + MCU_OFF_VOLT_1V0_AST);
+    mcu->curr_1v0_ast  = parse_2byte_be(udp_payload + MCU_OFF_CURR_1V0_AST);
+
+    // Voltage divider data (raw / 1000)
+    mcu->vdiv_3v3      = parse_2byte_be(udp_payload + MCU_OFF_VDIV_3V3);
+    mcu->vdiv_3v3_fo   = parse_2byte_be(udp_payload + MCU_OFF_VDIV_3V3_FO);
+    mcu->vdiv_12v      = parse_2byte_be(udp_payload + MCU_OFF_VDIV_12V);
+
+    // Temperature data (raw / 100)
+    mcu->board_temp    = parse_2byte_be(udp_payload + MCU_OFF_BOARD_TEMP);
+    mcu->fo_trans_temp = parse_2byte_be(udp_payload + MCU_OFF_FO_TRANS_TEMP);
+}
+
+// ==========================================
+// RESPONSE PARSING (Assistant / Manager / MCU)
 // ==========================================
 
 static void health_parse_response(const uint8_t *packet, size_t len, struct health_cycle_data *cycle)
 {
     // Get UDP payload pointer
     const uint8_t *udp_payload = packet + HEALTH_UDP_PAYLOAD_OFFSET;
-    size_t payload_len = len - HEALTH_UDP_PAYLOAD_OFFSET;
 
     // Determine packet type by size
     bool has_device_header = false;
@@ -172,18 +248,57 @@ static void health_parse_response(const uint8_t *packet, size_t len, struct heal
         // 438 bytes: Mini header + 3 ports
         port_count_in_packet = 3;
         port_data_offset = HEALTH_MINI_HEADER_SIZE;
-    } else if (len == HEALTH_PKT_SIZE_MCU) {
-        // 84 bytes: MCU data - skip
-        return;
     } else {
-        // Unknown packet size - skip
+        // Not an FPGA packet - treat as MCU data
+        // MCU expected ~84 bytes but accept any non-FPGA health response
+        if (len >= (size_t)(HEALTH_UDP_PAYLOAD_OFFSET + MCU_OFF_FO_TRANS_TEMP + 2)) {
+            parse_mcu_data(udp_payload, &cycle->mcu);
+            cycle->mcu.valid = true;
+            cycle->total_responses_received++;
+        } else {
+            printf("[HEALTH] Unexpected small packet: %zu bytes (need >= %d for MCU)\n",
+                   len, (int)(HEALTH_UDP_PAYLOAD_OFFSET + MCU_OFF_FO_TRANS_TEMP + 2));
+        }
         return;
     }
 
-    // Parse device header if present (only once per cycle)
-    if (has_device_header && !cycle->device_info_valid) {
-        parse_device_header(udp_payload, &cycle->device);
-        cycle->device_info_valid = true;
+    // Determine which FPGA this packet belongs to based on packet order:
+    //   Packet 1 (1187) + Packet 2 (1083) -> Assistant FPGA
+    //   Packet 3 (1187) + Packet 4 (1083) + Packet 5 (438) -> Manager FPGA
+    //
+    // Assistant receives: 1x 1187 + 1x 1083 = 2 packets
+    // Manager receives:   1x 1187 + 1x 1083 + 1x 438 = 3 packets
+    //
+    // Logic: First 1187 goes to assistant, second 1187 goes to manager.
+    //        First 1083 goes to assistant, second 1083 goes to manager.
+    //        438 always goes to manager.
+
+    struct health_fpga_data *target_fpga = NULL;
+
+    if (len == HEALTH_PKT_SIZE_3_PORTS) {
+        // 438 byte packet always belongs to Manager
+        target_fpga = &cycle->manager;
+    } else if (has_device_header) {
+        // 1187 byte packet: first goes to assistant, second to manager
+        if (!cycle->assistant.device_info_valid) {
+            target_fpga = &cycle->assistant;
+        } else {
+            target_fpga = &cycle->manager;
+        }
+    } else {
+        // 1083 byte packet: first goes to assistant, second to manager
+        if (cycle->assistant.packets_received < ASSISTANT_EXPECTED_PACKETS &&
+            cycle->assistant.device_info_valid) {
+            target_fpga = &cycle->assistant;
+        } else {
+            target_fpga = &cycle->manager;
+        }
+    }
+
+    // Parse device header if present
+    if (has_device_header && !target_fpga->device_info_valid) {
+        parse_device_header(udp_payload, &target_fpga->device);
+        target_fpga->device_info_valid = true;
     }
 
     // Parse port data
@@ -196,13 +311,15 @@ static void health_parse_response(const uint8_t *packet, size_t len, struct heal
         // Store in correct slot by port number
         uint16_t pnum = temp_port.port_number;
         if (pnum < HEALTH_MAX_PORTS) {
-            cycle->ports[pnum] = temp_port;
+            target_fpga->ports[pnum] = temp_port;
+            target_fpga->port_count_received++;
         }
 
         port_ptr += HEALTH_PORT_DATA_SIZE;
     }
 
-    cycle->responses_received++;
+    target_fpga->packets_received++;
+    cycle->total_responses_received++;
 }
 
 // ==========================================
@@ -221,47 +338,61 @@ static double convert_fpga_temperature(uint16_t raw)
 {
     uint16_t integer_part = (raw & 0x7FF0) >> 4;
     uint16_t fractional_part = raw & 0xF;
-    // String concat: str(integer) + "." + str(fractional)
-    // fractional 0-9 -> 1 digit, 10-15 -> 2 digits
     double divisor = (fractional_part >= 10) ? 100.0 : 10.0;
     double kelvin = (double)integer_part + (double)fractional_part / divisor;
     return kelvin - 273.15;
+}
+
+static const char *port_speed_str(uint64_t speed)
+{
+    switch (speed) {
+    case 0:  return "1000M";
+    case 1:  return "10M";
+    case 2:  return "100M";
+    default: return "???";
+    }
 }
 
 // ==========================================
 // TABLE PRINTING
 // ==========================================
 
-static void health_print_table(const struct health_cycle_data *cycle)
+static void health_print_fpga_table(const char *fpga_name, const struct health_fpga_data *fpga)
 {
-    const struct health_device_info *dev = &cycle->device;
+    const struct health_device_info *dev = &fpga->device;
 
-    // Device Status Header
-    printf("[HEALTH] ============ Device Status ============\n");
-    printf("[HEALTH] DevID=0x%04X | OpType=0x%02X | CfgType=0x%02X | Mode=0x%02X | Ports=%d\n",
-           dev->device_id, dev->operation_type, dev->config_type, dev->sw_mode, dev->port_count);
-    printf("[HEALTH] FW=%d.%d.%d | ES_FW=%d.%d.%d | ConfigID=%d\n",
-           dev->fw_major, dev->fw_minor, dev->fw_patch,
-           dev->es_fw_major, dev->es_fw_minor, dev->es_fw_patch,
-           dev->config_id);
-    printf("[HEALTH] Temp=%.2fC | Volt=%.4fV | EGI=%us | PowerUp=%us | InstTime=%us\n",
-           convert_fpga_temperature(dev->fpga_temp), convert_fpga_voltage(dev->fpga_voltage),
-           dev->egi_time_sec, dev->power_up_time, dev->instant_time);
-    printf("[HEALTH] TxTotal=%lu | RxTotal=%lu\n",
-           (unsigned long)dev->tx_total_count, (unsigned long)dev->rx_total_count);
+    // FPGA Device Status Header
+    printf("[HEALTH] ============ %s FPGA - Device Status ============\n", fpga_name);
 
-    // Port Status Table Header
-    printf("[HEALTH] ============ Port Status (%d/%d received) ============\n",
-           cycle->responses_received, HEALTH_MONITOR_EXPECTED_RESPONSES);
+    if (fpga->device_info_valid) {
+        printf("[HEALTH] DevID=0x%04X | OpType=0x%02X | CfgType=0x%02X | StatusEnable=0x%02X\n",
+               dev->device_id, dev->operation_type, dev->config_type, dev->status_enable);
+        printf("[HEALTH] Mode=0x%02X | Ports=%d | ConfigID=%d\n",
+               dev->sw_mode, dev->port_count, dev->config_id);
+        printf("[HEALTH] SW_FIRMW=%d.%d.%d | ES_FIRMW=%d.%d.%d | VendorID=%d\n",
+               dev->sw_ip_major, dev->sw_ip_minor, dev->sw_ip_patch,
+               dev->es_ip_major, dev->es_ip_minor, dev->es_ip_patch,
+               dev->vendor_id);
+        printf("[HEALTH] Temp=%.2fC | Volt=%.4fV\n",
+               convert_fpga_temperature(dev->fpga_temp), convert_fpga_voltage(dev->fpga_voltage));
+        printf("[HEALTH] TxTotal=%lu | RxTotal=%lu | TxErrTotal=%lu | RxErrTotal=%lu\n",
+               (unsigned long)dev->tx_total_count, (unsigned long)dev->rx_total_count,
+               (unsigned long)dev->tx_err_total_count, (unsigned long)dev->rx_err_total_count);
+    } else {
+        printf("[HEALTH] Device info: NOT RECEIVED\n");
+    }
+
+    // Port Status Table
+    printf("[HEALTH] ---- %s FPGA Port Status (pkts=%d, ports=%d) ----\n",
+           fpga_name, fpga->packets_received, fpga->port_count_received);
     printf("[HEALTH] Port |    TxCnt |    RxCnt | PolDrop | VLDrop | HP_Ovf | LP_Ovf | BE_Ovf |\n");
     printf("[HEALTH] -----|----------|----------|---------|--------|--------|--------|--------|\n");
 
-    // Port Data Rows (sorted 0-34)
     for (int i = 0; i < HEALTH_MAX_PORTS; i++) {
-        const struct health_port_info *p = &cycle->ports[i];
+        const struct health_port_info *p = &fpga->ports[i];
         if (p->valid) {
             printf("[HEALTH] %4d | %8lu | %8lu | %7lu | %6lu | %6lu | %6lu | %6lu |\n",
-                   i,
+                   p->port_number,
                    (unsigned long)p->tx_count,
                    (unsigned long)p->rx_count,
                    (unsigned long)p->traffic_policy_drop,
@@ -269,11 +400,54 @@ static void health_print_table(const struct health_cycle_data *cycle)
                    (unsigned long)p->hp_queue_overflow,
                    (unsigned long)p->lp_queue_overflow,
                    (unsigned long)p->be_queue_overflow);
-        } else {
-            printf("[HEALTH] %4d |      N/A |      N/A |     N/A |    N/A |    N/A |    N/A |    N/A |\n", i);
         }
     }
+}
+
+static void health_print_tables(const struct health_cycle_data *cycle)
+{
+    printf("\n");
+
+    // Assistant FPGA Table
+    health_print_fpga_table("ASSISTANT", &cycle->assistant);
+
+    printf("[HEALTH] ================================================\n\n");
+
+    // Manager FPGA Table
+    health_print_fpga_table("MANAGER", &cycle->manager);
+
     printf("[HEALTH] ================================================\n");
+
+    // MCU Table
+    printf("[HEALTH] ============ MCU - Status ============\n");
+    if (cycle->mcu.valid) {
+        const struct health_mcu_info *mcu = &cycle->mcu;
+        printf("[HEALTH] DevID=0x%04X | StatusEnable=0x%02X | FW=%d.%d | CompStat=0x%02X | CompStatus=0x%04X\n",
+               mcu->device_id, mcu->status_enable, mcu->fw_major, mcu->fw_minor,
+               mcu->comp_stat, mcu->comp_status);
+        printf("[HEALTH] ---- Voltage & Current Data ----\n");
+        printf("[HEALTH] Rail              | Volt(V) | Curr(A) |\n");
+        printf("[HEALTH] -----------------|---------|----------|\n");
+        printf("[HEALTH] 12V              | %7.3f | %8.3f |\n", mcu->volt_12v / 1000.0, mcu->curr_12v / 1000.0);
+        printf("[HEALTH] 3V3              | %7.3f | %8.3f |\n", mcu->volt_3v3 / 1000.0, mcu->curr_3v3 / 1000.0);
+        printf("[HEALTH] 1V8              | %7.3f | %8.3f |\n", mcu->volt_1v8 / 1000.0, mcu->curr_1v8 / 1000.0);
+        printf("[HEALTH] 3V3 FO Trans     | %7.3f | %8.3f |\n", mcu->volt_3v3_fo / 1000.0, mcu->curr_3v3_fo / 1000.0);
+        printf("[HEALTH] 1V3              | %7.3f | %8.3f |\n", mcu->volt_1v3 / 1000.0, mcu->curr_1v3 / 1000.0);
+        printf("[HEALTH] 1V0 Mgr FPGA     | %7.3f | %8.3f |\n", mcu->volt_1v0_mgr / 1000.0, mcu->curr_1v0_mgr / 1000.0);
+        printf("[HEALTH] 1V0 Ast FPGA     | %7.3f | %8.3f |\n", mcu->volt_1v0_ast / 1000.0, mcu->curr_1v0_ast / 1000.0);
+        printf("[HEALTH] ---- Voltage Divider Data ----\n");
+        printf("[HEALTH] 3V3=%.3fV | 3V3 FO=%.3fV | 12V=%.3fV\n",
+               mcu->vdiv_3v3 / 1000.0, mcu->vdiv_3v3_fo / 1000.0, mcu->vdiv_12v / 1000.0);
+        printf("[HEALTH] ---- Temperatures ----\n");
+        printf("[HEALTH] Board=%.2fC | FO Transceiver=%.2fC\n",
+               mcu->board_temp / 100.0, mcu->fo_trans_temp / 100.0);
+    } else {
+        printf("[HEALTH] MCU: NOT RECEIVED\n");
+    }
+
+    printf("[HEALTH] Total responses: %d/%d\n",
+           cycle->total_responses_received, HEALTH_MONITOR_EXPECTED_RESPONSES);
+    printf("[HEALTH] ================================================\n\n");
 }
 
 static int get_interface_index(const char *ifname)
@@ -300,6 +474,8 @@ static int get_interface_index(const char *ifname)
 
 static int create_raw_socket(const char *ifname, int if_index)
 {
+    (void)ifname;
+
     // Create raw socket
     int sock = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
     if (sock < 0) {
@@ -371,7 +547,7 @@ static bool is_health_response(const uint8_t *packet, size_t len)
     // Minimum packet size check
     if (len < 14) return false;
 
-    // Check VL_IDX at DST MAC offset 4-5
+    // Check VL_IDX at DST MAC offset 4-5 (all health packets including MCU)
     if (packet[4] == HEALTH_MONITOR_RESPONSE_VL_IDX_HIGH &&
         packet[5] == HEALTH_MONITOR_RESPONSE_VL_IDX_LOW) {
         return true;
@@ -386,7 +562,7 @@ static int receive_health_responses(int timeout_ms, struct health_cycle_data *cy
     uint8_t buffer[HEALTH_MONITOR_RX_BUFFER_SIZE];
     uint64_t start_time = get_time_ms();
 
-    while (cycle->responses_received < HEALTH_MONITOR_EXPECTED_RESPONSES) {
+    while (cycle->total_responses_received < HEALTH_MONITOR_EXPECTED_RESPONSES) {
         // Calculate remaining timeout
         uint64_t elapsed = get_time_ms() - start_time;
         if (elapsed >= (uint64_t)timeout_ms) {
@@ -420,6 +596,7 @@ static int receive_health_responses(int timeout_ms, struct health_cycle_data *cy
 
             // Check if this is a health response and parse it
             if (is_health_response(buffer, len)) {
+                printf("[HEALTH-DBG] Accepted packet: %zd bytes\n", len);
                 health_parse_response(buffer, len, cycle);
             }
             // else: ignore non-health packets (PRBS traffic etc.)
@@ -466,15 +643,15 @@ static void *health_monitor_thread_func(void *arg)
         uint64_t cycle_end = get_time_ms();
         uint64_t cycle_time = cycle_end - cycle_start;
 
-        // 4. Print parsed data table
-        health_print_table(&cycle);
+        // 4. Print parsed data tables (Assistant + Manager)
+        health_print_tables(&cycle);
 
         // 5. Update statistics
         pthread_spin_lock(&state->stats_lock);
-        state->stats.responses_received += cycle.responses_received;
+        state->stats.responses_received += cycle.total_responses_received;
         state->stats.last_cycle_time_ms = cycle_time;
-        state->stats.last_response_count = cycle.responses_received;
-        if (cycle.responses_received < HEALTH_MONITOR_EXPECTED_RESPONSES) {
+        state->stats.last_response_count = cycle.total_responses_received;
+        if (cycle.total_responses_received < HEALTH_MONITOR_EXPECTED_RESPONSES) {
             state->stats.timeouts++;
         }
         pthread_spin_unlock(&state->stats_lock);
@@ -509,7 +686,9 @@ int init_health_monitor(void)
     printf("  Interface: %s\n", HEALTH_MONITOR_INTERFACE);
     printf("  Query interval: %d ms\n", HEALTH_MONITOR_QUERY_INTERVAL_MS);
     printf("  Response timeout: %d ms\n", HEALTH_MONITOR_RESPONSE_TIMEOUT_MS);
-    printf("  Expected responses: %d\n", HEALTH_MONITOR_EXPECTED_RESPONSES);
+    printf("  Expected responses: %d (Assistant=%d + Manager=%d + MCU=%d)\n",
+           HEALTH_MONITOR_EXPECTED_RESPONSES,
+           ASSISTANT_EXPECTED_PACKETS, MANAGER_EXPECTED_PACKETS, MCU_EXPECTED_PACKETS);
     printf("  Response VL_IDX: 0x%04X (%d)\n",
            HEALTH_MONITOR_RESPONSE_VL_IDX, HEALTH_MONITOR_RESPONSE_VL_IDX);
 
