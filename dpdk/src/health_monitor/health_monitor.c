@@ -543,9 +543,14 @@ static bool is_health_response(const uint8_t *packet, size_t len)
     // Minimum packet size check
     if (len < 14) return false;
 
-    // Check VL_IDX at DST MAC offset 4-5
+    // Check VL_IDX at DST MAC offset 4-5 (FPGA packets)
     if (packet[4] == HEALTH_MONITOR_RESPONSE_VL_IDX_HIGH &&
         packet[5] == HEALTH_MONITOR_RESPONSE_VL_IDX_LOW) {
+        return true;
+    }
+
+    // MCU packet may have different VL_IDX, accept by size
+    if (len == HEALTH_PKT_SIZE_MCU) {
         return true;
     }
 
