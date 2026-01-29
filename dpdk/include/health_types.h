@@ -28,7 +28,7 @@
 #define HEALTH_PKT_SIZE_WITH_HEADER  1187  // Device header + 8 ports
 #define HEALTH_PKT_SIZE_8_PORTS      1083  // 8 ports (no header)
 #define HEALTH_PKT_SIZE_3_PORTS      438   // 3 ports
-#define HEALTH_PKT_SIZE_MCU          84    // MCU data
+#define HEALTH_PKT_SIZE_MCU          94    // MCU data
 
 // ==========================================
 // FPGA TYPES
@@ -37,7 +37,7 @@
 // Per-cycle packet ordering:
 //   pkt1 (1187) + pkt2 (1083) = Assistant FPGA  (16 ports)
 //   pkt3 (1187) + pkt4 (1083) + pkt5 (438) = Manager FPGA (19 ports)
-//   pkt6 (84) = MCU
+//   pkt6 (94) = MCU
 
 typedef enum {
     FPGA_TYPE_ASSISTANT = 0,
@@ -53,7 +53,7 @@ typedef enum {
 #define MANAGER_EXPECTED_PACKETS     3
 #define MANAGER_MAX_PORTS            19
 
-// MCU: 1 packet (84 bytes)
+// MCU: 1 packet (94 bytes)
 #define MCU_EXPECTED_PACKETS         1
 
 // Total expected per cycle
@@ -214,33 +214,38 @@ struct health_port_info {
 // ==========================================
 
 #define MCU_OFF_DEVICE_ID            0    // 2 bytes
-#define MCU_OFF_OPERATION_TYPE       2    // 1 byte
+#define MCU_OFF_OPERATION_TYPE       2    // 1 byte (ReadWriteFlag)
 #define MCU_OFF_CONFIG_TYPE          3    // 1 byte
 #define MCU_OFF_FRAME_LENGTH         4    // 2 bytes
 #define MCU_OFF_STATUS_ENABLE        6    // 1 byte
-#define MCU_OFF_FPGA_ADDR            7    // 1 byte
-#define MCU_OFF_RESERVED             8    // 2 bytes
-// Current data (raw / 1000)
-#define MCU_OFF_CURR_12V             10   // 2 bytes
-#define MCU_OFF_CURR_3V3             12   // 2 bytes
-#define MCU_OFF_CURR_1V8             14   // 2 bytes
-#define MCU_OFF_CURR_3V3_FO          16   // 2 bytes (3v3 FO transceiver)
-#define MCU_OFF_CURR_1V3             18   // 2 bytes
-#define MCU_OFF_CURR_1V0_MGR         20   // 2 bytes (1v0 DTN IRSW manager FPGA)
-#define MCU_OFF_CURR_1V0_AST         22   // 2 bytes (1v0 DTN IRSW assistant FPGA)
-// Voltage data (raw / 1000)
-#define MCU_OFF_VOLT_3V3             24   // 2 bytes
-#define MCU_OFF_VOLT_3V3_FO          26   // 2 bytes (3v3 FO transceiver)
-#define MCU_OFF_VOLT_12V             28   // 2 bytes
-#define MCU_OFF_VOLT_1V8             30   // 2 bytes (1v8 VCCIO)
-#define MCU_OFF_VOLT_1V3_MGR         32   // 2 bytes (1v3 VDD DTN IRSW manager FPGA)
-#define MCU_OFF_VOLT_1V3_AST         34   // 2 bytes (1v3 VDD DTN IRSW assistant FPGA)
+#define MCU_OFF_FW_VERSION           7    // 2 bytes (MCU firmware version major.minor)
+#define MCU_OFF_COMP_STAT            9    // 1 byte (component stat)
+#define MCU_OFF_COMP_STATUS          10   // 2 bytes (component status)
+// Voltage & current data pairs (raw / 1000)
+#define MCU_OFF_VOLT_12V             12   // 2 bytes
+#define MCU_OFF_CURR_12V             14   // 2 bytes
+#define MCU_OFF_VOLT_3V3             16   // 2 bytes
+#define MCU_OFF_CURR_3V3             18   // 2 bytes
+#define MCU_OFF_VOLT_1V8             20   // 2 bytes
+#define MCU_OFF_CURR_1V8             22   // 2 bytes
+#define MCU_OFF_VOLT_3V3_FO          24   // 2 bytes (3v3 FO transceiver)
+#define MCU_OFF_CURR_3V3_FO          26   // 2 bytes
+#define MCU_OFF_CURR_1V3             28   // 2 bytes
+#define MCU_OFF_VOLT_1V3             30   // 2 bytes
+#define MCU_OFF_CURR_1V0_MGR         32   // 2 bytes (1v0 DTN IRSW manager FPGA)
+#define MCU_OFF_VOLT_1V0_MGR         34   // 2 bytes
+#define MCU_OFF_VOLT_1V0_AST         36   // 2 bytes (1v0 DTN IRSW assistant FPGA)
+#define MCU_OFF_CURR_1V0_AST         38   // 2 bytes
+// Voltage divider data (raw / 1000)
+#define MCU_OFF_VDIV_3V3             40   // 2 bytes
+#define MCU_OFF_VDIV_3V3_FO          42   // 2 bytes (3v3 FO transceiver)
+#define MCU_OFF_VDIV_12V             44   // 2 bytes
 // Temperature data (raw / 100)
-#define MCU_OFF_CBA_TEMP             36   // 2 bytes (CBA temperature)
-#define MCU_OFF_FO_TRANS_TEMP        38   // 2 bytes (FO transceiver temperature)
+#define MCU_OFF_BOARD_TEMP           46   // 2 bytes (board/CBA temperature)
+#define MCU_OFF_FO_TRANS_TEMP        48   // 2 bytes (FO transceiver temperature)
 
 /**
- * @brief MCU data (parsed from 84-byte response)
+ * @brief MCU data (parsed from 94-byte response)
  *
  * Current/voltage values: raw / 1000.0
  * Temperature values: raw / 100.0
@@ -252,28 +257,35 @@ struct health_mcu_info {
     uint8_t  config_type;
     uint16_t frame_length;
     uint8_t  status_enable;
-    uint8_t  fpga_addr;
+    uint8_t  fw_major;            // MCU firmware version major
+    uint8_t  fw_minor;            // MCU firmware version minor
+    uint8_t  comp_stat;           // Component stat
+    uint16_t comp_status;         // Component status
 
-    // Current data (raw value, divide by 1000 for display)
-    uint16_t curr_12v;
-    uint16_t curr_3v3;
-    uint16_t curr_1v8;
-    uint16_t curr_3v3_fo;          // 3v3 FO transceiver
-    uint16_t curr_1v3;
-    uint16_t curr_1v0_mgr;        // 1v0 DTN IRSW manager FPGA
-    uint16_t curr_1v0_ast;        // 1v0 DTN IRSW assistant FPGA
-
-    // Voltage data (raw value, divide by 1000 for display)
-    uint16_t volt_3v3;
-    uint16_t volt_3v3_fo;         // 3v3 FO transceiver
+    // Voltage & current data (raw value, divide by 1000 for display)
     uint16_t volt_12v;
-    uint16_t volt_1v8;            // 1v8 VCCIO
-    uint16_t volt_1v3_mgr;       // 1v3 VDD DTN IRSW manager FPGA
-    uint16_t volt_1v3_ast;       // 1v3 VDD DTN IRSW assistant FPGA
+    uint16_t curr_12v;
+    uint16_t volt_3v3;
+    uint16_t curr_3v3;
+    uint16_t volt_1v8;
+    uint16_t curr_1v8;
+    uint16_t volt_3v3_fo;         // 3v3 FO transceiver
+    uint16_t curr_3v3_fo;
+    uint16_t curr_1v3;
+    uint16_t volt_1v3;
+    uint16_t curr_1v0_mgr;       // 1v0 DTN IRSW manager FPGA
+    uint16_t volt_1v0_mgr;
+    uint16_t volt_1v0_ast;       // 1v0 DTN IRSW assistant FPGA
+    uint16_t curr_1v0_ast;
+
+    // Voltage divider data (raw value, divide by 1000 for display)
+    uint16_t vdiv_3v3;
+    uint16_t vdiv_3v3_fo;        // 3v3 FO transceiver
+    uint16_t vdiv_12v;
 
     // Temperature data (raw value, divide by 100 for display)
-    uint16_t cba_temp;
-    uint16_t fo_trans_temp;
+    uint16_t board_temp;          // Board/CBA temperature
+    uint16_t fo_trans_temp;       // FO transceiver temperature
 
     bool     valid;
 };
