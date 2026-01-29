@@ -248,7 +248,8 @@ static void health_parse_response(const uint8_t *packet, size_t len, struct heal
         cycle->total_responses_received++;
         return;
     } else {
-        // Unknown packet size - skip
+        // Unknown packet size - log for debugging
+        fprintf(stderr, "[HEALTH] Unknown response packet size: %zu bytes\n", len);
         return;
     }
 
