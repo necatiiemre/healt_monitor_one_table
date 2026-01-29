@@ -28,7 +28,7 @@
 #define HEALTH_PKT_SIZE_WITH_HEADER  1187  // Device header + 8 ports
 #define HEALTH_PKT_SIZE_8_PORTS      1083  // 8 ports (no header)
 #define HEALTH_PKT_SIZE_3_PORTS      438   // 3 ports
-#define HEALTH_PKT_SIZE_MCU          84    // MCU data
+#define HEALTH_PKT_SIZE_MCU          94    // MCU data
 
 // ==========================================
 // FPGA TYPES
@@ -37,7 +37,7 @@
 // Per-cycle packet ordering:
 //   pkt1 (1187) + pkt2 (1083) = Assistant FPGA  (16 ports)
 //   pkt3 (1187) + pkt4 (1083) + pkt5 (438) = Manager FPGA (19 ports)
-//   pkt6 (84) = MCU
+//   pkt6 (94) = MCU
 
 typedef enum {
     FPGA_TYPE_ASSISTANT = 0,
@@ -209,12 +209,95 @@ struct health_port_info {
     bool     valid;               // Data received flag
 };
 
+// ==========================================
+// MCU DATA OFFSETS (from UDP payload)
+// ==========================================
+
+#define MCU_OFF_DEVICE_ID            0    // 2 bytes
+#define MCU_OFF_OPERATION_TYPE       2    // 1 byte
+#define MCU_OFF_CONFIG_TYPE          3    // 1 byte
+#define MCU_OFF_FRAME_LENGTH         4    // 2 bytes
+#define MCU_OFF_STATUS_ENABLE        6    // 1 byte
+#define MCU_OFF_FW_VERSION           7    // 2 bytes (major, minor)
+#define MCU_OFF_COMP_STAT            9    // 1 byte
+#define MCU_OFF_COMPONENT_STATUS     10   // 2 bytes
+#define MCU_OFF_VOLT_12V             12   // 2 bytes
+#define MCU_OFF_CURR_12V             14   // 2 bytes
+#define MCU_OFF_VOLT_3V3             16   // 2 bytes
+#define MCU_OFF_CURR_3V3             18   // 2 bytes
+#define MCU_OFF_VOLT_1V8             20   // 2 bytes
+#define MCU_OFF_CURR_1V8             22   // 2 bytes
+#define MCU_OFF_VOLT_3V3_FO          24   // 2 bytes (3v3 FO transceiver)
+#define MCU_OFF_CURR_3V3_FO          26   // 2 bytes (3v3 FO transceiver)
+#define MCU_OFF_CURR_1V3             28   // 2 bytes
+#define MCU_OFF_VOLT_1V3             30   // 2 bytes
+#define MCU_OFF_CURR_1V0_MGR         32   // 2 bytes (1v0 DTN IRSW manager FPGA)
+#define MCU_OFF_VOLT_1V0_MGR         34   // 2 bytes (1v0 DTN IRSW manager FPGA)
+#define MCU_OFF_VOLT_1V0_AST         36   // 2 bytes (1v0 DTN IRSW assistant FPGA)
+#define MCU_OFF_CURR_1V0_AST         38   // 2 bytes (1v0 DTN IRSW assistant FPGA)
+#define MCU_OFF_VDIV_3V3             40   // 2 bytes (voltage divider 3v3)
+#define MCU_OFF_VDIV_3V3_FO          42   // 2 bytes (voltage divider 3v3 FO transceiver)
+#define MCU_OFF_VDIV_12V             44   // 2 bytes (voltage divider 12v)
+#define MCU_OFF_BOARD_TEMP           46   // 2 bytes
+#define MCU_OFF_FO_TRANS_TEMP        48   // 2 bytes (FO transceiver 1 temperature)
+
 /**
- * @brief MCU data (parsed from 84-byte response)
+ * @brief MCU data (parsed from 94-byte response)
  */
 struct health_mcu_info {
-    uint8_t  raw_data[84];        // Raw MCU packet data
-    bool     valid;               // MCU data received flag
+    // Header
+    uint16_t device_id;
+    uint8_t  operation_type;
+    uint8_t  config_type;
+    uint16_t frame_length;
+    uint8_t  status_enable;
+
+    // MCU firmware
+    uint8_t  fw_major;
+    uint8_t  fw_minor;
+
+    // Component status
+    uint8_t  comp_stat;
+    uint16_t component_status;
+
+    // Power rail: 12V
+    uint16_t volt_12v;
+    uint16_t curr_12v;
+
+    // Power rail: 3V3
+    uint16_t volt_3v3;
+    uint16_t curr_3v3;
+
+    // Power rail: 1V8
+    uint16_t volt_1v8;
+    uint16_t curr_1v8;
+
+    // Power rail: 3V3 FO Transceiver
+    uint16_t volt_3v3_fo;
+    uint16_t curr_3v3_fo;
+
+    // Power rail: 1V3
+    uint16_t curr_1v3;
+    uint16_t volt_1v3;
+
+    // Power rail: 1V0 Manager FPGA
+    uint16_t curr_1v0_mgr;
+    uint16_t volt_1v0_mgr;
+
+    // Power rail: 1V0 Assistant FPGA
+    uint16_t volt_1v0_ast;
+    uint16_t curr_1v0_ast;
+
+    // Voltage dividers
+    uint16_t vdiv_3v3;
+    uint16_t vdiv_3v3_fo;
+    uint16_t vdiv_12v;
+
+    // Temperatures
+    uint16_t board_temp;
+    uint16_t fo_trans_temp;
+
+    bool     valid;
 };
 
 /**

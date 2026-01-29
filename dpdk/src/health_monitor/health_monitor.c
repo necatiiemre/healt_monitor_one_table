@@ -179,6 +179,48 @@ static void parse_port_data(const uint8_t *port_data, struct health_port_info *p
 }
 
 // ==========================================
+// MCU DATA PARSING
+// ==========================================
+
+static void parse_mcu_data(const uint8_t *udp_payload, struct health_mcu_info *mcu)
+{
+    mcu->device_id        = parse_2byte_be(udp_payload + MCU_OFF_DEVICE_ID);
+    mcu->operation_type   = udp_payload[MCU_OFF_OPERATION_TYPE];
+    mcu->config_type      = udp_payload[MCU_OFF_CONFIG_TYPE];
+    mcu->frame_length     = parse_2byte_be(udp_payload + MCU_OFF_FRAME_LENGTH);
+    mcu->status_enable    = udp_payload[MCU_OFF_STATUS_ENABLE];
+    mcu->fw_major         = udp_payload[MCU_OFF_FW_VERSION];
+    mcu->fw_minor         = udp_payload[MCU_OFF_FW_VERSION + 1];
+    mcu->comp_stat        = udp_payload[MCU_OFF_COMP_STAT];
+    mcu->component_status = parse_2byte_be(udp_payload + MCU_OFF_COMPONENT_STATUS);
+
+    // Power rails
+    mcu->volt_12v      = parse_2byte_be(udp_payload + MCU_OFF_VOLT_12V);
+    mcu->curr_12v      = parse_2byte_be(udp_payload + MCU_OFF_CURR_12V);
+    mcu->volt_3v3      = parse_2byte_be(udp_payload + MCU_OFF_VOLT_3V3);
+    mcu->curr_3v3      = parse_2byte_be(udp_payload + MCU_OFF_CURR_3V3);
+    mcu->volt_1v8      = parse_2byte_be(udp_payload + MCU_OFF_VOLT_1V8);
+    mcu->curr_1v8      = parse_2byte_be(udp_payload + MCU_OFF_CURR_1V8);
+    mcu->volt_3v3_fo   = parse_2byte_be(udp_payload + MCU_OFF_VOLT_3V3_FO);
+    mcu->curr_3v3_fo   = parse_2byte_be(udp_payload + MCU_OFF_CURR_3V3_FO);
+    mcu->curr_1v3      = parse_2byte_be(udp_payload + MCU_OFF_CURR_1V3);
+    mcu->volt_1v3      = parse_2byte_be(udp_payload + MCU_OFF_VOLT_1V3);
+    mcu->curr_1v0_mgr  = parse_2byte_be(udp_payload + MCU_OFF_CURR_1V0_MGR);
+    mcu->volt_1v0_mgr  = parse_2byte_be(udp_payload + MCU_OFF_VOLT_1V0_MGR);
+    mcu->volt_1v0_ast  = parse_2byte_be(udp_payload + MCU_OFF_VOLT_1V0_AST);
+    mcu->curr_1v0_ast  = parse_2byte_be(udp_payload + MCU_OFF_CURR_1V0_AST);
+
+    // Voltage dividers
+    mcu->vdiv_3v3      = parse_2byte_be(udp_payload + MCU_OFF_VDIV_3V3);
+    mcu->vdiv_3v3_fo   = parse_2byte_be(udp_payload + MCU_OFF_VDIV_3V3_FO);
+    mcu->vdiv_12v      = parse_2byte_be(udp_payload + MCU_OFF_VDIV_12V);
+
+    // Temperatures
+    mcu->board_temp     = parse_2byte_be(udp_payload + MCU_OFF_BOARD_TEMP);
+    mcu->fo_trans_temp  = parse_2byte_be(udp_payload + MCU_OFF_FO_TRANS_TEMP);
+}
+
+// ==========================================
 // RESPONSE PARSING (Assistant / Manager / MCU)
 // ==========================================
 
@@ -206,8 +248,8 @@ static void health_parse_response(const uint8_t *packet, size_t len, struct heal
         port_count_in_packet = 3;
         port_data_offset = HEALTH_MINI_HEADER_SIZE;
     } else if (len == HEALTH_PKT_SIZE_MCU) {
-        // 84 bytes: MCU data
-        memcpy(cycle->mcu.raw_data, packet, len);
+        // 94 bytes: MCU data
+        parse_mcu_data(udp_payload, &cycle->mcu);
         cycle->mcu.valid = true;
         cycle->total_responses_received++;
         return;
@@ -372,9 +414,28 @@ static void health_print_tables(const struct health_cycle_data *cycle)
 
     printf("[HEALTH] ================================================\n");
 
-    // MCU Status
+    // MCU Table
+    printf("[HEALTH] ============ MCU - Status ============\n");
     if (cycle->mcu.valid) {
-        printf("[HEALTH] MCU: Data received (84 bytes)\n");
+        const struct health_mcu_info *mcu = &cycle->mcu;
+        printf("[HEALTH] MCU_FIRMW=%d.%d | StatusEnable=0x%02X | CompStat=0x%02X | CompStatus=0x%04X\n",
+               mcu->fw_major, mcu->fw_minor, mcu->status_enable, mcu->comp_stat, mcu->component_status);
+        printf("[HEALTH] ---- Power Rails ----\n");
+        printf("[HEALTH] Rail            |  Voltage |  Current |\n");
+        printf("[HEALTH] ----------------|----------|----------|\n");
+        printf("[HEALTH] 12V             | %8u | %8u |\n", mcu->volt_12v, mcu->curr_12v);
+        printf("[HEALTH] 3V3             | %8u | %8u |\n", mcu->volt_3v3, mcu->curr_3v3);
+        printf("[HEALTH] 1V8             | %8u | %8u |\n", mcu->volt_1v8, mcu->curr_1v8);
+        printf("[HEALTH] 3V3 FO Trans    | %8u | %8u |\n", mcu->volt_3v3_fo, mcu->curr_3v3_fo);
+        printf("[HEALTH] 1V3             | %8u | %8u |\n", mcu->volt_1v3, mcu->curr_1v3);
+        printf("[HEALTH] 1V0 Mgr FPGA    | %8u | %8u |\n", mcu->volt_1v0_mgr, mcu->curr_1v0_mgr);
+        printf("[HEALTH] 1V0 Ast FPGA    | %8u | %8u |\n", mcu->volt_1v0_ast, mcu->curr_1v0_ast);
+        printf("[HEALTH] ---- Voltage Dividers ----\n");
+        printf("[HEALTH] VDiv 3V3=%u | VDiv 3V3 FO=%u | VDiv 12V=%u\n",
+               mcu->vdiv_3v3, mcu->vdiv_3v3_fo, mcu->vdiv_12v);
+        printf("[HEALTH] ---- Temperatures ----\n");
+        printf("[HEALTH] Board=%u | FO Transceiver=%u\n",
+               mcu->board_temp, mcu->fo_trans_temp);
     } else {
         printf("[HEALTH] MCU: NOT RECEIVED\n");
     }
