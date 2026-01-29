@@ -28,86 +28,154 @@
 #define HEALTH_PKT_SIZE_WITH_HEADER  1187  // Device header + 8 ports
 #define HEALTH_PKT_SIZE_8_PORTS      1083  // 8 ports (no header)
 #define HEALTH_PKT_SIZE_3_PORTS      438   // 3 ports
-#define HEALTH_PKT_SIZE_MCU          84    // MCU data (skip)
+#define HEALTH_PKT_SIZE_MCU          84    // MCU data
+
+// ==========================================
+// FPGA TYPES
+// ==========================================
+
+// Per-cycle packet ordering:
+//   pkt1 (1187) + pkt2 (1083) = Assistant FPGA  (16 ports)
+//   pkt3 (1187) + pkt4 (1083) + pkt5 (438) = Manager FPGA (19 ports)
+//   pkt6 (84) = MCU
+
+typedef enum {
+    FPGA_TYPE_ASSISTANT = 0,
+    FPGA_TYPE_MANAGER   = 1,
+    FPGA_TYPE_COUNT     = 2
+} fpga_type_t;
+
+// Assistant FPGA: 2 packets (1187 + 1083) = 8 + 8 = 16 ports
+#define ASSISTANT_EXPECTED_PACKETS   2
+#define ASSISTANT_MAX_PORTS          16
+
+// Manager FPGA: 3 packets (1187 + 1083 + 438) = 8 + 8 + 3 = 19 ports
+#define MANAGER_EXPECTED_PACKETS     3
+#define MANAGER_MAX_PORTS            19
+
+// MCU: 1 packet (84 bytes)
+#define MCU_EXPECTED_PACKETS         1
+
+// Total expected per cycle
+#define HEALTH_TOTAL_EXPECTED_PACKETS (ASSISTANT_EXPECTED_PACKETS + MANAGER_EXPECTED_PACKETS + MCU_EXPECTED_PACKETS)  // 6
 
 // ==========================================
 // DEVICE HEADER OFFSETS (from UDP payload)
 // ==========================================
 
 #define DEV_OFF_DEVICE_ID            0    // 2 bytes
-#define DEV_OFF_OPERATION_TYPE       2    // 1 byte
-#define DEV_OFF_CONFIG_TYPE          3    // 1 byte
-#define DEV_OFF_FRAME_LENGTH         4    // 2 bytes
-#define DEV_OFF_STATUS_ENABLE        6    // 1 byte
+#define DEV_OFF_OPERATION_TYPE       2    // 1 byte (ReadWriteFlag)
+#define DEV_OFF_CONFIG_TYPE          3    // 1 byte (config type start address)
+#define DEV_OFF_FRAME_LENGTH         4    // 2 bytes (monitoring data length)
+#define DEV_OFF_STATUS_ENABLE        6    // 1 byte (assistant/manager flag)
+#define DEV_OFF_STATUS_ADDR          7    // 2 bytes (status address)
 #define DEV_OFF_TX_TOTAL_COUNT       9    // 6 bytes
 #define DEV_OFF_RX_TOTAL_COUNT       15   // 6 bytes
-#define DEV_OFF_CBA_TEMP             23   // 4 bytes
+#define DEV_OFF_TX_ERR_TOTAL_COUNT   21   // 6 bytes
+#define DEV_OFF_RX_ERR_TOTAL_COUNT   27   // 6 bytes
+#define DEV_OFF_HEARTBEAT            33   // 1 byte
 #define DEV_OFF_DEV_ID2              34   // 2 bytes
 #define DEV_OFF_PORT_COUNT           36   // 1 byte
 #define DEV_OFF_TOKEN_BUCKET         37   // 1 byte
 #define DEV_OFF_SW_MODE              38   // 1 byte
-#define DEV_OFF_MICROCHIP_SEL        39   // 4 bytes
-#define DEV_OFF_FW_VERSION           45   // 6 bytes
-#define DEV_OFF_ES_FW_VERSION        51   // 6 bytes
-#define DEV_OFF_EGI_TIME_SEC         59   // 4 bytes
+#define DEV_OFF_PADDING1             39   // 3 bytes
+#define DEV_OFF_VENDOR_ID            42   // 1 byte
+#define DEV_OFF_AUTO_MAC_UPDATE      43   // 1 byte
+#define DEV_OFF_UPSTREAM_MODE        44   // 1 byte
+#define DEV_OFF_SW_IP_CORE_VER       45   // 6 bytes
+#define DEV_OFF_ES_IP_CORE_VER       51   // 6 bytes
+#define DEV_OFF_SW_INPUT_FIFO        57   // 2 bytes
+#define DEV_OFF_PKT_PRO_FIFO         59   // 2 bytes
+#define DEV_OFF_SW_OUTPUT_FIFO       61   // 2 bytes
 #define DEV_OFF_HP_FIFO_SIZE         63   // 2 bytes
 #define DEV_OFF_LP_FIFO_SIZE         65   // 2 bytes
 #define DEV_OFF_BE_FIFO_SIZE         67   // 2 bytes
-#define DEV_OFF_POWER_UP_TIME        71   // 4 bytes
-#define DEV_OFF_INSTANT_TIME         77   // 4 bytes
-#define DEV_OFF_FPGA_TEMP            101  // 2 bytes
-#define DEV_OFF_FPGA_VOLTAGE         103  // 2 bytes
+#define DEV_OFF_PADDING2             69   // 1 byte
+#define DEV_OFF_TOD_NS               70   // 5 bytes
+#define DEV_OFF_PADDING3             75   // 1 byte
+#define DEV_OFF_TOD_SEC              76   // 5 bytes
+#define DEV_OFF_ETH_WRONG_DEV_CNT   81   // 6 bytes
+#define DEV_OFF_ETH_WRONG_OP_CNT    87   // 6 bytes
+#define DEV_OFF_ETH_WRONG_TYPE_CNT  93   // 6 bytes
+#define DEV_OFF_RESERVED1            99   // 2 bytes
+#define DEV_OFF_FPGA_VOLTAGE         101  // 2 bytes
+#define DEV_OFF_FPGA_TEMP            103  // 2 bytes
 #define DEV_OFF_CONFIG_ID            105  // 2 bytes
+#define DEV_OFF_RESERVED2            107  // 4 bytes
 
 // ==========================================
 // PORT DATA OFFSETS (from port data start)
 // ==========================================
 
-#define PORT_OFF_PORT_NUMBER         0    // 2 bytes
-#define PORT_OFF_BIT_STATUS          2    // 1 byte
+#define PORT_OFF_PORT_NUMBER         0    // 2 bytes (monitoring port address)
+#define PORT_OFF_BIT_STATUS          2    // 1 byte (upper 4: bit test result, lower 4: get port stats)
 #define PORT_OFF_CRC_ERR_CNT         3    // 6 bytes
-#define PORT_OFF_MIN_VL_FRAME_ERR    27   // 6 bytes
-#define PORT_OFF_MAX_VL_FRAME_ERR    33   // 6 bytes
-#define PORT_OFF_TRAFFIC_POLICY_DROP 45   // 6 bytes
-#define PORT_OFF_BE_COUNT            51   // 6 bytes
+#define PORT_OFF_ALI_ERR_CNT         9    // 6 bytes (alignment error)
+#define PORT_OFF_LEN_EXC_64          15   // 6 bytes (length exceed count 64)
+#define PORT_OFF_LEN_EXC_1518        21   // 6 bytes (length exceed count 1518)
+#define PORT_OFF_MIN_VL_FRAME_ERR    27   // 6 bytes (length exceed vl min)
+#define PORT_OFF_MAX_VL_FRAME_ERR    33   // 6 bytes (length exceed vl max)
+#define PORT_OFF_INP_PORT_TERR_CNT   39   // 6 bytes (input port terror count)
+#define PORT_OFF_TRAFFIC_POLICY_DROP 45   // 6 bytes (traffic filter count)
+#define PORT_OFF_BE_COUNT            51   // 6 bytes (consider count)
 #define PORT_OFF_TX_COUNT            57   // 6 bytes
 #define PORT_OFF_RX_COUNT            63   // 6 bytes
-#define PORT_OFF_VL_SOURCE_ERR       69   // 6 bytes
-#define PORT_OFF_MAX_DELAY_ERR       75   // 6 bytes
-#define PORT_OFF_VLID_DROP           87   // 6 bytes
-#define PORT_OFF_UNDEF_MAC           93   // 6 bytes
+#define PORT_OFF_VL_SOURCE_ERR       69   // 6 bytes (count err vl)
+#define PORT_OFF_MAX_DELAY_ERR       75   // 6 bytes (count err over max delay)
+#define PORT_OFF_QUEUE_OVERFLOW      81   // 6 bytes (count err queue overflow)
+#define PORT_OFF_VLID_DROP           87   // 6 bytes (undefined vl err count)
+#define PORT_OFF_UNDEF_MAC           93   // 6 bytes (undefined be mac err count)
 #define PORT_OFF_HP_QUEUE_OVERFLOW   99   // 6 bytes
 #define PORT_OFF_LP_QUEUE_OVERFLOW   105  // 6 bytes
 #define PORT_OFF_BE_QUEUE_OVERFLOW   111  // 6 bytes
+#define PORT_OFF_MAX_DELAY_PARAM     117  // 6 bytes (max delay parameter)
+#define PORT_OFF_PORT_SPEED          123  // 6 bytes (0=1000M, 1=10M, 2=100M)
 
 // ==========================================
 // DATA STRUCTURES
 // ==========================================
 
 /**
- * @brief Device header information (parsed from response)
+ * @brief Device header information (parsed from 1187-byte response)
  */
 struct health_device_info {
     uint16_t device_id;           // Device ID
-    uint8_t  operation_type;      // Operation type (e.g., 0x53)
-    uint8_t  config_type;         // Config type (e.g., 0x44)
-    uint16_t frame_length;        // Monitoring frame length
-    uint8_t  status_enable;       // Status enable flags
-    uint64_t tx_total_count;      // SW TX total count
-    uint64_t rx_total_count;      // SW RX total count
-    uint8_t  port_count;          // Number of ports (e.g., 35)
+    uint8_t  operation_type;      // ReadWriteFlag (e.g., 0x53)
+    uint8_t  config_type;         // Config type start address (e.g., 0x44)
+    uint16_t frame_length;        // Monitoring data (frame) length
+    uint8_t  status_enable;       // Status enable (assistant/manager indicator)
+    uint16_t status_addr;         // Status address
+    uint64_t tx_total_count;      // Total TX frame count
+    uint64_t rx_total_count;      // Total RX frame count
+    uint64_t tx_err_total_count;  // Total error TX frame count
+    uint64_t rx_err_total_count;  // Total error RX frame count
+    uint8_t  heartbeat;           // Heartbeat counter
+    uint16_t device_id2;          // Device ID (repeated)
+    uint8_t  port_count;          // Number of ports (e.g., 0x23 = 35)
+    uint8_t  token_bucket_status; // Token bucket status
     uint8_t  sw_mode;             // Switch mode
-    uint8_t  fw_major;            // Firmware version major
-    uint8_t  fw_minor;            // Firmware version minor
-    uint8_t  fw_patch;            // Firmware version patch
-    uint8_t  es_fw_major;         // Embedded ES firmware major
-    uint8_t  es_fw_minor;         // Embedded ES firmware minor
-    uint8_t  es_fw_patch;         // Embedded ES firmware patch
-    uint32_t egi_time_sec;        // EGI time in seconds
-    uint32_t power_up_time;       // FPGA power up time
-    uint32_t instant_time;        // Instant time
-    uint16_t fpga_temp;           // FPGA temperature (raw)
+    uint8_t  vendor_id;           // Vendor ID
+    uint8_t  auto_mac_update;     // Auto MAC update
+    uint8_t  upstream_mode;       // Upstream mode
+    uint8_t  sw_ip_major;         // SW IP core version major
+    uint8_t  sw_ip_minor;         // SW IP core version minor
+    uint8_t  sw_ip_patch;         // SW IP core version patch
+    uint8_t  es_ip_major;         // ES IP core version major
+    uint8_t  es_ip_minor;         // ES IP core version minor
+    uint8_t  es_ip_patch;         // ES IP core version patch
+    uint16_t sw_input_fifo_size;  // SW input FIFO size
+    uint16_t pkt_pro_fifo_size;   // Packet pro output FIFO size
+    uint16_t sw_output_fifo_size; // SW output FIFO size
+    uint16_t hp_fifo_size;        // High priority FIFO size
+    uint16_t lp_fifo_size;        // Low priority FIFO size
+    uint16_t be_fifo_size;        // Best effort FIFO size
+    uint64_t tod_ns;              // Time of day nanoseconds (5 bytes)
+    uint64_t tod_sec;             // Time of day seconds (5 bytes)
+    uint64_t eth_wrong_dev_cnt;   // Eth conf wrong device ID count
+    uint64_t eth_wrong_op_cnt;    // Eth conf wrong operation mode count
+    uint64_t eth_wrong_type_cnt;  // Eth conf wrong type count
     uint16_t fpga_voltage;        // FPGA voltage (raw)
+    uint16_t fpga_temp;           // FPGA temperature (raw)
     uint16_t config_id;           // Configuration ID
 };
 
@@ -115,33 +183,59 @@ struct health_device_info {
  * @brief Port monitoring data (parsed from response)
  */
 struct health_port_info {
-    uint16_t port_number;         // Port number (0-34)
-    uint8_t  bit_status;          // Bit status / stats flags
+    uint16_t port_number;         // Monitoring port address
+    uint8_t  bit_status;          // Upper 4 bit: bit test result, Lower 4 bit: get port stats
     uint64_t crc_err_count;       // CRC error count
-    uint64_t min_vl_frame_err;    // Min VL frame error count
-    uint64_t max_vl_frame_err;    // Max VL frame error count
-    uint64_t traffic_policy_drop; // Traffic policy drop count
-    uint64_t be_count;            // BE count
-    uint64_t tx_count;            // TX count
-    uint64_t rx_count;            // RX count
-    uint64_t vl_source_err;       // VL source error count
-    uint64_t max_delay_err;       // Max delay error count
-    uint64_t vlid_drop_count;     // VLID drop count
-    uint64_t undef_mac_count;     // Undefined MAC count
-    uint64_t hp_queue_overflow;   // High priority queue overflow
-    uint64_t lp_queue_overflow;   // Low priority queue overflow
-    uint64_t be_queue_overflow;   // Best effort queue overflow
+    uint64_t ali_err_count;       // Alignment error count
+    uint64_t len_exc_64;          // Length exceed count 64
+    uint64_t len_exc_1518;        // Length exceed count 1518
+    uint64_t min_vl_frame_err;    // Length exceed VL min
+    uint64_t max_vl_frame_err;    // Length exceed VL max
+    uint64_t inp_port_terr_cnt;   // Input port terror count
+    uint64_t traffic_policy_drop; // Traffic filter count
+    uint64_t be_count;            // Consider count
+    uint64_t tx_count;            // TX frame count
+    uint64_t rx_count;            // RX frame count
+    uint64_t vl_source_err;       // Count error VL
+    uint64_t max_delay_err;       // Count error over max delay
+    uint64_t queue_overflow;      // Count error queue overflow
+    uint64_t vlid_drop_count;     // Undefined VL error count
+    uint64_t undef_mac_count;     // Undefined BE MAC error count
+    uint64_t hp_queue_overflow;   // High priority queue overflow count
+    uint64_t lp_queue_overflow;   // Low priority queue overflow count
+    uint64_t be_queue_overflow;   // Best effort queue overflow count
+    uint64_t max_delay_param;     // Max delay parameter
+    uint64_t port_speed;          // Port speed (0=1000M, 1=10M, 2=100M)
     bool     valid;               // Data received flag
 };
 
 /**
- * @brief Complete health cycle data (all responses combined)
+ * @brief MCU data (parsed from 84-byte response)
+ */
+struct health_mcu_info {
+    uint8_t  raw_data[84];        // Raw MCU packet data
+    bool     valid;               // MCU data received flag
+};
+
+/**
+ * @brief Per-FPGA cycle data (device info + ports)
+ */
+struct health_fpga_data {
+    struct health_device_info device;               // FPGA device info
+    struct health_port_info   ports[HEALTH_MAX_PORTS]; // Port data
+    uint8_t  packets_received;                      // Packets received for this FPGA
+    bool     device_info_valid;                     // Device info parsed flag
+    uint8_t  port_count_received;                   // Number of ports parsed
+};
+
+/**
+ * @brief Complete health cycle data (assistant + manager + MCU)
  */
 struct health_cycle_data {
-    struct health_device_info device;              // Device info
-    struct health_port_info   ports[HEALTH_MAX_PORTS];  // Port data (0-34)
-    uint8_t  responses_received;                   // Number of responses received
-    bool     device_info_valid;                    // Device info parsed flag
+    struct health_fpga_data  assistant;             // Assistant FPGA data
+    struct health_fpga_data  manager;               // Manager FPGA data
+    struct health_mcu_info   mcu;                   // MCU data
+    uint8_t  total_responses_received;              // Total responses this cycle
 };
 
 #endif // HEALTH_TYPES_H

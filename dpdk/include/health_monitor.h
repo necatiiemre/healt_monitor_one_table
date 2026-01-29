@@ -13,7 +13,7 @@
 #define HEALTH_MONITOR_INTERFACE "eno12409"  // Port 13 interface
 #define HEALTH_MONITOR_QUERY_INTERVAL_MS 1000  // Query interval (1 second)
 #define HEALTH_MONITOR_RESPONSE_TIMEOUT_MS 500  // Response timeout (500ms)
-#define HEALTH_MONITOR_EXPECTED_RESPONSES 6  // Expected response count
+#define HEALTH_MONITOR_EXPECTED_RESPONSES HEALTH_TOTAL_EXPECTED_PACKETS  // 6 (2 assistant + 3 manager + 1 MCU)
 #define HEALTH_MONITOR_QUERY_SIZE 64  // Query packet size
 #define HEALTH_MONITOR_SEQ_INIT 0x2F  // Initial sequence number (47)
 #define HEALTH_MONITOR_RX_BUFFER_SIZE 2048  // RX buffer size
