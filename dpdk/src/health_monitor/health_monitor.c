@@ -241,15 +241,17 @@ static void health_parse_response(const uint8_t *packet, size_t len, struct heal
         // 438 bytes: Mini header + 3 ports
         port_count_in_packet = 3;
         port_data_offset = HEALTH_MINI_HEADER_SIZE;
-    } else if (len == HEALTH_PKT_SIZE_MCU) {
-        // 84 bytes: MCU data
-        parse_mcu_data(udp_payload, &cycle->mcu);
-        cycle->mcu.valid = true;
-        cycle->total_responses_received++;
-        return;
     } else {
-        // Unknown packet size - log for debugging
-        fprintf(stderr, "[HEALTH] Unknown response packet size: %zu bytes\n", len);
+        // Not an FPGA packet - treat as MCU data
+        // MCU expected ~84 bytes but accept any non-FPGA health response
+        if (len >= HEALTH_UDP_PAYLOAD_OFFSET + MCU_OFF_FO_TRANS_TEMP + 2) {
+            parse_mcu_data(udp_payload, &cycle->mcu);
+            cycle->mcu.valid = true;
+            cycle->total_responses_received++;
+        } else {
+            printf("[HEALTH] Unexpected small packet: %zu bytes (need >= %d for MCU)\n",
+                   len, HEALTH_UDP_PAYLOAD_OFFSET + MCU_OFF_FO_TRANS_TEMP + 2);
+        }
         return;
     }
 
@@ -543,14 +545,9 @@ static bool is_health_response(const uint8_t *packet, size_t len)
     // Minimum packet size check
     if (len < 14) return false;
 
-    // Check VL_IDX at DST MAC offset 4-5 (FPGA packets)
+    // Check VL_IDX at DST MAC offset 4-5 (all health packets including MCU)
     if (packet[4] == HEALTH_MONITOR_RESPONSE_VL_IDX_HIGH &&
         packet[5] == HEALTH_MONITOR_RESPONSE_VL_IDX_LOW) {
-        return true;
-    }
-
-    // MCU packet may have different VL_IDX, accept by size
-    if (len == HEALTH_PKT_SIZE_MCU) {
         return true;
     }
 
@@ -597,6 +594,7 @@ static int receive_health_responses(int timeout_ms, struct health_cycle_data *cy
 
             // Check if this is a health response and parse it
             if (is_health_response(buffer, len)) {
+                printf("[HEALTH-DBG] Accepted packet: %zd bytes\n", len);
                 health_parse_response(buffer, len, cycle);
             }
             // else: ignore non-health packets (PRBS traffic etc.)
