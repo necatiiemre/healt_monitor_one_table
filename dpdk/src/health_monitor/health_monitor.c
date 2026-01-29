@@ -321,9 +321,9 @@ static void health_print_fpga_table(const char *fpga_name, const struct health_f
     if (fpga->device_info_valid) {
         printf("[HEALTH] DevID=0x%04X | OpType=0x%02X | CfgType=0x%02X | StatusEnable=0x%02X\n",
                dev->device_id, dev->operation_type, dev->config_type, dev->status_enable);
-        printf("[HEALTH] Mode=0x%02X | Ports=%d | Heartbeat=%d | ConfigID=%d\n",
-               dev->sw_mode, dev->port_count, dev->heartbeat, dev->config_id);
-        printf("[HEALTH] SW_IP=%d.%d.%d | ES_IP=%d.%d.%d | VendorID=%d\n",
+        printf("[HEALTH] Mode=0x%02X | Ports=%d | ConfigID=%d\n",
+               dev->sw_mode, dev->port_count, dev->config_id);
+        printf("[HEALTH] SW_FIRMW=%d.%d.%d | ES_FIRMW=%d.%d.%d | VendorID=%d\n",
                dev->sw_ip_major, dev->sw_ip_minor, dev->sw_ip_patch,
                dev->es_ip_major, dev->es_ip_minor, dev->es_ip_patch,
                dev->vendor_id);
@@ -332,14 +332,6 @@ static void health_print_fpga_table(const char *fpga_name, const struct health_f
         printf("[HEALTH] TxTotal=%lu | RxTotal=%lu | TxErrTotal=%lu | RxErrTotal=%lu\n",
                (unsigned long)dev->tx_total_count, (unsigned long)dev->rx_total_count,
                (unsigned long)dev->tx_err_total_count, (unsigned long)dev->rx_err_total_count);
-        printf("[HEALTH] HP_FIFO=%d | LP_FIFO=%d | BE_FIFO=%d\n",
-               dev->hp_fifo_size, dev->lp_fifo_size, dev->be_fifo_size);
-        printf("[HEALTH] ToD_ns=%lu | ToD_sec=%lu\n",
-               (unsigned long)dev->tod_ns, (unsigned long)dev->tod_sec);
-        printf("[HEALTH] EthWrongDev=%lu | EthWrongOp=%lu | EthWrongType=%lu\n",
-               (unsigned long)dev->eth_wrong_dev_cnt,
-               (unsigned long)dev->eth_wrong_op_cnt,
-               (unsigned long)dev->eth_wrong_type_cnt);
     } else {
         printf("[HEALTH] Device info: NOT RECEIVED\n");
     }
@@ -347,25 +339,21 @@ static void health_print_fpga_table(const char *fpga_name, const struct health_f
     // Port Status Table
     printf("[HEALTH] ---- %s FPGA Port Status (pkts=%d, ports=%d) ----\n",
            fpga_name, fpga->packets_received, fpga->port_count_received);
-    printf("[HEALTH] Port | Speed |    TxCnt |    RxCnt |  CRC_Err | Ali_Err | PolDrop | VLDrop | HP_Ovf | LP_Ovf | BE_Ovf | MaxDlyErr |\n");
-    printf("[HEALTH] -----|-------|----------|----------|----------|---------|---------|--------|--------|--------|--------|-----------|\n");
+    printf("[HEALTH] Port |    TxCnt |    RxCnt | PolDrop | VLDrop | HP_Ovf | LP_Ovf | BE_Ovf |\n");
+    printf("[HEALTH] -----|----------|----------|---------|--------|--------|--------|--------|\n");
 
     for (int i = 0; i < HEALTH_MAX_PORTS; i++) {
         const struct health_port_info *p = &fpga->ports[i];
         if (p->valid) {
-            printf("[HEALTH] %4d | %5s | %8lu | %8lu | %8lu | %7lu | %7lu | %6lu | %6lu | %6lu | %6lu | %9lu |\n",
+            printf("[HEALTH] %4d | %8lu | %8lu | %7lu | %6lu | %6lu | %6lu | %6lu |\n",
                    p->port_number,
-                   port_speed_str(p->port_speed),
                    (unsigned long)p->tx_count,
                    (unsigned long)p->rx_count,
-                   (unsigned long)p->crc_err_count,
-                   (unsigned long)p->ali_err_count,
                    (unsigned long)p->traffic_policy_drop,
                    (unsigned long)p->vlid_drop_count,
                    (unsigned long)p->hp_queue_overflow,
                    (unsigned long)p->lp_queue_overflow,
-                   (unsigned long)p->be_queue_overflow,
-                   (unsigned long)p->max_delay_err);
+                   (unsigned long)p->be_queue_overflow);
         }
     }
 }
