@@ -29,8 +29,24 @@
 
 struct raw_socket_port raw_ports[MAX_RAW_SOCKET_PORTS];
 struct raw_socket_port_config raw_port_configs[MAX_RAW_SOCKET_PORTS] = RAW_SOCKET_PORTS_CONFIG_INIT;
+int active_raw_port_count = NORMAL_RAW_SOCKET_PORT_COUNT;
 
 static volatile bool *g_stop_flag = NULL;
+
+// ATE mode config (4 port: 12↔14, 13↔15 full-duplex)
+static const struct raw_socket_port_config ate_raw_port_configs[MAX_RAW_SOCKET_PORTS] = ATE_RAW_SOCKET_PORTS_CONFIG_INIT;
+
+void raw_socket_ports_load_config(bool ate_mode)
+{
+    if (ate_mode) {
+        memcpy(raw_port_configs, ate_raw_port_configs, sizeof(raw_port_configs));
+        active_raw_port_count = ATE_RAW_SOCKET_PORT_COUNT;
+        printf("[ATE] ATE mode raw socket config loaded (4 ports: 12↔14, 13↔15)\n");
+    } else {
+        active_raw_port_count = NORMAL_RAW_SOCKET_PORT_COUNT;
+        printf("[CONFIG] Normal mode raw socket config active (2 ports: 12, 13)\n");
+    }
+}
 
 // ==========================================
 // GLOBAL SEQUENCE TRACKING (shared across all RX queues)
@@ -698,8 +714,8 @@ int setup_raw_rx_ring(struct raw_socket_port *port)
 
 int setup_multi_queue_rx(struct raw_socket_port *port)
 {
-    // Determine queue count based on port type
-    int target_queue_count = (port->port_id == 12) ? PORT_12_RX_QUEUE_COUNT : PORT_13_RX_QUEUE_COUNT;
+    // Determine queue count based on port type (1G=4 queues, 100M=2 queues)
+    int target_queue_count = port->config.is_1g_port ? 4 : 2;
 
     printf("\n=== Setting up Multi-Queue RX for Port %u ===\n", port->port_id);
     printf("  Target queue count: %d\n", target_queue_count);
@@ -963,7 +979,7 @@ int init_raw_socket_ports(void)
     // Initialize global sequence tracking (sets min_seq to UINT64_MAX)
     reset_global_sequence_tracking();
 
-    for (int i = 0; i < MAX_RAW_SOCKET_PORTS; i++) {
+    for (int i = 0; i < active_raw_port_count; i++) {
         if (init_raw_socket_port(i, &raw_port_configs[i]) < 0) {
             fprintf(stderr, "Failed to initialize raw socket port %u\n",
                     raw_port_configs[i].port_id);
@@ -1158,7 +1174,7 @@ void *raw_rx_worker(void *arg)
     struct raw_socket_port *partner = NULL;
     if (port->rx_source_count > 0) {
         uint16_t partner_port_id = port->rx_sources[0].config.source_port;
-        for (int i = 0; i < MAX_RAW_SOCKET_PORTS; i++) {
+        for (int i = 0; i < active_raw_port_count; i++) {
             if (raw_ports[i].port_id == partner_port_id) {
                 partner = &raw_ports[i];
                 break;
@@ -1866,7 +1882,7 @@ void *multi_queue_rx_worker(void *arg)
             // PRBS verification - find partner port
             struct raw_socket_port *partner = NULL;
             uint16_t partner_port_id = source->config.source_port;
-            for (int i = 0; i < MAX_RAW_SOCKET_PORTS; i++) {
+            for (int i = 0; i < active_raw_port_count; i++) {
                 if (raw_ports[i].port_id == partner_port_id) {
                     partner = &raw_ports[i];
                     break;
@@ -2011,13 +2027,10 @@ int start_raw_socket_workers(volatile bool *stop_flag)
     g_stop_flag = stop_flag;
 
     // Start RX workers
-    for (int i = 0; i < MAX_RAW_SOCKET_PORTS; i++) {
+    for (int i = 0; i < active_raw_port_count; i++) {
         raw_ports[i].stop_flag = false;
 
-        // Port 12 (index 0): Use multi-queue RX for high throughput DPDK external packets
-        // Port 13 (index 1): Use legacy single-thread RX (lower throughput)
         if (raw_ports[i].use_multi_queue_rx) {
-            // Multi-queue RX for Port 12 and Port 13
             if (start_multi_queue_rx_workers(&raw_ports[i], stop_flag) != 0) {
                 fprintf(stderr, "[Port %u] Failed to start multi-queue RX workers\n", raw_ports[i].port_id);
                 return -1;
@@ -2034,7 +2047,7 @@ int start_raw_socket_workers(volatile bool *stop_flag)
     usleep(100000);  // 100ms
 
     // Start TX workers
-    for (int i = 0; i < MAX_RAW_SOCKET_PORTS; i++) {
+    for (int i = 0; i < active_raw_port_count; i++) {
         if (pthread_create(&raw_ports[i].tx_thread, NULL, raw_tx_worker, &raw_ports[i]) != 0) {
             fprintf(stderr, "[Port %u] Failed to create TX thread\n", raw_ports[i].port_id);
             return -1;
@@ -2050,12 +2063,12 @@ void stop_raw_socket_workers(void)
     printf("\n=== Stopping Raw Socket Workers ===\n");
 
     // Signal all ports to stop
-    for (int i = 0; i < MAX_RAW_SOCKET_PORTS; i++) {
+    for (int i = 0; i < active_raw_port_count; i++) {
         raw_ports[i].stop_flag = true;
     }
 
     // Wait for all workers to finish
-    for (int i = 0; i < MAX_RAW_SOCKET_PORTS; i++) {
+    for (int i = 0; i < active_raw_port_count; i++) {
         // Stop TX thread
         if (raw_ports[i].tx_running) {
             pthread_join(raw_ports[i].tx_thread, NULL);
@@ -2101,7 +2114,7 @@ void print_raw_socket_stats(void)
     printf("║    Source    ║    Target    ║      Rate      ║       TX Pkts       ║    TX Mbps     ║       RX Pkts       ║        Good         ║         Bad         ║        Lost         ║     Bit Errors      ║           BER           ║\n");
     printf("╠══════════════╬══════════════╬════════════════╬═════════════════════╬════════════════╬═════════════════════╬═════════════════════╬═════════════════════╬═════════════════════╬═════════════════════╬═════════════════════════╣\n");
 
-    for (int p = 0; p < MAX_RAW_SOCKET_PORTS; p++) {
+    for (int p = 0; p < active_raw_port_count; p++) {
         struct raw_socket_port *port = &raw_ports[p];
 
         // Print TX targets
@@ -2118,7 +2131,7 @@ void print_raw_socket_stats(void)
             uint64_t rx_pkts = 0, good = 0, bad = 0, lost = 0, bit_err = 0;
 
             // Look for RX source in the destination port
-            for (int dp = 0; dp < MAX_RAW_SOCKET_PORTS; dp++) {
+            for (int dp = 0; dp < active_raw_port_count; dp++) {
                 if (raw_ports[dp].port_id == target->config.dest_port) {
                     for (int s = 0; s < raw_ports[dp].rx_source_count; s++) {
                         if (raw_ports[dp].rx_sources[s].config.source_port == port->port_id &&
@@ -2156,8 +2169,9 @@ void print_raw_socket_stats(void)
 
     printf("╚══════════════╩══════════════╩════════════════╩═════════════════════╩════════════════╩═════════════════════╩═════════════════════╩═════════════════════╩═════════════════════╩═════════════════════╩═════════════════════════╝\n");
 
-    // Show DPDK External RX stats for Port 12
+    // Show DPDK External RX stats (only in normal mode, not ATE mode)
 #if DPDK_EXT_TX_ENABLED
+  if (active_raw_port_count <= NORMAL_RAW_SOCKET_PORT_COUNT) {
     struct raw_socket_port *port12 = &raw_ports[0]; // Port 12 is index 0
     if (port12->port_id == 12) {
         pthread_spin_lock(&port12->dpdk_ext_rx_stats.lock);
@@ -2253,12 +2267,13 @@ void print_raw_socket_stats(void)
             }
         }
     }
+  } // end if (normal mode)
 #endif
 }
 
 void reset_raw_socket_stats(void)
 {
-    for (int p = 0; p < MAX_RAW_SOCKET_PORTS; p++) {
+    for (int p = 0; p < active_raw_port_count; p++) {
         struct raw_socket_port *port = &raw_ports[p];
 
         for (int t = 0; t < port->tx_target_count; t++) {
@@ -2300,7 +2315,7 @@ void cleanup_raw_socket_ports(void)
 {
     printf("\n=== Cleaning up Raw Socket Ports ===\n");
 
-    for (int i = 0; i < MAX_RAW_SOCKET_PORTS; i++) {
+    for (int i = 0; i < active_raw_port_count; i++) {
         struct raw_socket_port *port = &raw_ports[i];
 
         port->stop_flag = true;

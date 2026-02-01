@@ -315,6 +315,9 @@ int main(int argc, char const *argv[])
 
 #if ENABLE_RAW_SOCKET_PORTS
     // *** RAW SOCKET PORTS INITIALIZATION ***
+    // Load ATE or normal config before initializing ports
+    raw_socket_ports_load_config(ate_mode_enabled());
+
     printf("\n=== Initializing Raw Socket Ports (Non-DPDK) ===\n");
     printf("These ports use AF_PACKET with zero-copy (PACKET_MMAP)\n");
     printf("VLAN header: Disabled for raw socket ports\n\n");

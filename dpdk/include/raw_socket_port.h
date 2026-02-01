@@ -38,6 +38,8 @@
 #define RAW_SOCKET_RX_QUEUE_COUNT   4            // Max RX queues (for array sizing)
 #define PORT_12_RX_QUEUE_COUNT      4            // Port 12: 4 queues for 1G
 #define PORT_13_RX_QUEUE_COUNT      2            // Port 13: 2 queues for 100M
+#define PORT_14_RX_QUEUE_COUNT      4            // Port 14: 4 queues for 1G (ATE mode)
+#define PORT_15_RX_QUEUE_COUNT      2            // Port 15: 2 queues for 100M (ATE mode)
 #define RAW_SOCKET_FANOUT_GROUP_ID  0xCAFE       // Unique fanout group ID
 
 // Packet sizes (no VLAN header)
@@ -254,6 +256,10 @@ extern struct raw_socket_port_config raw_port_configs[MAX_RAW_SOCKET_PORTS];
 // ==========================================
 // INITIALIZATION FUNCTIONS
 // ==========================================
+
+// ATE mode: runtime config loading (normal=2 ports, ATE=4 ports)
+extern int active_raw_port_count;
+void raw_socket_ports_load_config(bool ate_mode);
 
 int init_raw_socket_ports(void);
 int init_raw_socket_port(int raw_index, const struct raw_socket_port_config *config);

@@ -83,7 +83,7 @@
 // Port 13 (100M bakır): 1 hedefe gönderim (80 Mbps)
 //   - Hedef 0: Port 12'e 80 Mbps, VL-ID 6275-6306 (32)
 
-#define MAX_RAW_SOCKET_PORTS 2
+#define MAX_RAW_SOCKET_PORTS 4
 #define RAW_SOCKET_PORT_ID_START 12
 #define MAX_RAW_TARGETS 8 // Maksimum hedef sayısı per port
 
@@ -96,6 +96,16 @@
 #define RAW_SOCKET_PORT_13_PCI "01:00.1"
 #define RAW_SOCKET_PORT_13_IFACE "eno12409"
 #define RAW_SOCKET_PORT_13_IS_1G false
+
+// Port 14 configuration (1G copper - ATE mode only)
+#define RAW_SOCKET_PORT_14_PCI "01:00.2"
+#define RAW_SOCKET_PORT_14_IFACE "eno12419"
+#define RAW_SOCKET_PORT_14_IS_1G true
+
+// Port 15 configuration (100M copper - ATE mode only)
+#define RAW_SOCKET_PORT_15_PCI "01:00.3"
+#define RAW_SOCKET_PORT_15_IFACE "eno12429"
+#define RAW_SOCKET_PORT_15_IS_1G false
 
 // ==========================================
 // MULTI-TARGET CONFIGURATION
@@ -152,6 +162,60 @@ struct raw_rx_source_config
   {                             \
   }
 
+// ==========================================
+// ATE MODE TX/RX CONFIGURATION
+// ==========================================
+// ATE modunda Port 12↔14, Port 13↔15 full-duplex iletişim kurar.
+// Her port tek target ile karşı tarafa gönderir, aynı VL-ID aralıklarını kullanır.
+
+// Port 12 ATE TX: 1 target → Port 14 (960 Mbps, VL-ID 4163-4290)
+#define ATE_PORT_12_TX_TARGET_COUNT 1
+#define ATE_PORT_12_TX_TARGETS_INIT {                                                                \
+    {.target_id = 0, .dest_port = 14, .rate_mbps = 960, .vl_id_start = 4163, .vl_id_count = 128},   \
+}
+
+// Port 12 ATE RX: Port 14'ten gelen paketler
+#define ATE_PORT_12_RX_SOURCE_COUNT 1
+#define ATE_PORT_12_RX_SOURCES_INIT {                                   \
+    {.source_port = 14, .vl_id_start = 4163, .vl_id_count = 128},      \
+}
+
+// Port 14 ATE TX: 1 target → Port 12 (960 Mbps, VL-ID 4163-4290)
+#define ATE_PORT_14_TX_TARGET_COUNT 1
+#define ATE_PORT_14_TX_TARGETS_INIT {                                                                \
+    {.target_id = 0, .dest_port = 12, .rate_mbps = 960, .vl_id_start = 4163, .vl_id_count = 128},   \
+}
+
+// Port 14 ATE RX: Port 12'den gelen paketler
+#define ATE_PORT_14_RX_SOURCE_COUNT 1
+#define ATE_PORT_14_RX_SOURCES_INIT {                                   \
+    {.source_port = 12, .vl_id_start = 4163, .vl_id_count = 128},      \
+}
+
+// Port 13 ATE TX: 1 target → Port 15 (92 Mbps, VL-ID 4131-4162)
+#define ATE_PORT_13_TX_TARGET_COUNT 1
+#define ATE_PORT_13_TX_TARGETS_INIT {                                                               \
+    {.target_id = 0, .dest_port = 15, .rate_mbps = 92, .vl_id_start = 4131, .vl_id_count = 32},    \
+}
+
+// Port 13 ATE RX: Port 15'ten gelen paketler
+#define ATE_PORT_13_RX_SOURCE_COUNT 1
+#define ATE_PORT_13_RX_SOURCES_INIT {                                   \
+    {.source_port = 15, .vl_id_start = 4131, .vl_id_count = 32},       \
+}
+
+// Port 15 ATE TX: 1 target → Port 13 (92 Mbps, VL-ID 4131-4162)
+#define ATE_PORT_15_TX_TARGET_COUNT 1
+#define ATE_PORT_15_TX_TARGETS_INIT {                                                               \
+    {.target_id = 0, .dest_port = 13, .rate_mbps = 92, .vl_id_start = 4131, .vl_id_count = 32},    \
+}
+
+// Port 15 ATE RX: Port 13'ten gelen paketler
+#define ATE_PORT_15_RX_SOURCE_COUNT 1
+#define ATE_PORT_15_RX_SOURCES_INIT {                                   \
+    {.source_port = 13, .vl_id_start = 4131, .vl_id_count = 32},       \
+}
+
 // Raw socket port configuration structure
 struct raw_socket_port_config
 {
@@ -197,8 +261,57 @@ struct raw_socket_port_config
       .tx_targets = INIT_TX_TARGETS_13,                \
       .rx_source_count = PORT_13_RX_SOURCE_COUNT,      \
       .rx_sources = INIT_RX_SOURCES_13                 \
-    }                                                  \
+    },                                                 \
+    /* Port 14/15: Placeholder (unused in normal mode) */ \
+    {0}, {0}                                           \
   }
+
+// Normal modda aktif port sayısı (sadece Port 12, 13)
+#define NORMAL_RAW_SOCKET_PORT_COUNT 2
+
+// ATE mode raw socket port configurations (4 port: 12↔14, 13↔15 full-duplex)
+#define ATE_RAW_SOCKET_PORTS_CONFIG_INIT                               \
+  {                                                                     \
+    /* Port 12: 1G → Port 14 (960 Mbps) */                             \
+    {.port_id = 12,                                                     \
+     .pci_addr = RAW_SOCKET_PORT_12_PCI,                                \
+     .interface_name = RAW_SOCKET_PORT_12_IFACE,                        \
+     .is_1g_port = RAW_SOCKET_PORT_12_IS_1G,                            \
+     .tx_target_count = ATE_PORT_12_TX_TARGET_COUNT,                    \
+     .tx_targets = ATE_PORT_12_TX_TARGETS_INIT,                         \
+     .rx_source_count = ATE_PORT_12_RX_SOURCE_COUNT,                    \
+     .rx_sources = ATE_PORT_12_RX_SOURCES_INIT},                        \
+    /* Port 13: 100M → Port 15 (92 Mbps) */                            \
+    {.port_id = 13,                                                     \
+     .pci_addr = RAW_SOCKET_PORT_13_PCI,                                \
+     .interface_name = RAW_SOCKET_PORT_13_IFACE,                        \
+     .is_1g_port = RAW_SOCKET_PORT_13_IS_1G,                            \
+     .tx_target_count = ATE_PORT_13_TX_TARGET_COUNT,                    \
+     .tx_targets = ATE_PORT_13_TX_TARGETS_INIT,                         \
+     .rx_source_count = ATE_PORT_13_RX_SOURCE_COUNT,                    \
+     .rx_sources = ATE_PORT_13_RX_SOURCES_INIT},                        \
+    /* Port 14: 1G → Port 12 (960 Mbps) */                             \
+    {.port_id = 14,                                                     \
+     .pci_addr = RAW_SOCKET_PORT_14_PCI,                                \
+     .interface_name = RAW_SOCKET_PORT_14_IFACE,                        \
+     .is_1g_port = RAW_SOCKET_PORT_14_IS_1G,                            \
+     .tx_target_count = ATE_PORT_14_TX_TARGET_COUNT,                    \
+     .tx_targets = ATE_PORT_14_TX_TARGETS_INIT,                         \
+     .rx_source_count = ATE_PORT_14_RX_SOURCE_COUNT,                    \
+     .rx_sources = ATE_PORT_14_RX_SOURCES_INIT},                        \
+    /* Port 15: 100M → Port 13 (92 Mbps) */                            \
+    {.port_id = 15,                                                     \
+     .pci_addr = RAW_SOCKET_PORT_15_PCI,                                \
+     .interface_name = RAW_SOCKET_PORT_15_IFACE,                        \
+     .is_1g_port = RAW_SOCKET_PORT_15_IS_1G,                            \
+     .tx_target_count = ATE_PORT_15_TX_TARGET_COUNT,                    \
+     .tx_targets = ATE_PORT_15_TX_TARGETS_INIT,                         \
+     .rx_source_count = ATE_PORT_15_RX_SOURCE_COUNT,                    \
+     .rx_sources = ATE_PORT_15_RX_SOURCES_INIT}                         \
+  }
+
+// ATE modunda aktif port sayısı (Port 12, 13, 14, 15)
+#define ATE_RAW_SOCKET_PORT_COUNT 4
 
 // ==========================================
 // VLAN & VL-ID MAPPING (PORT-AWARE)
