@@ -32,6 +32,13 @@
 extern struct port_vlan_config port_vlans[MAX_PORTS_CONFIG];
 
 /**
+ * @brief Load VLAN config based on ATE mode
+ * Call after g_ate_mode is set (after latency test sequence).
+ * Loads ATE_PORT_VLAN_CONFIG_INIT if ATE mode, otherwise keeps default.
+ */
+void port_vlans_load_config(bool ate_mode);
+
+/**
  * Token bucket for rate limiting
  */
 struct rate_limiter

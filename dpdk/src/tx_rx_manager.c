@@ -13,8 +13,22 @@
 // GLOBAL VARIABLES
 // ==========================================
 
-// Global VLAN configuration for all ports
+// Global VLAN configuration for all ports (default: normal mode)
 struct port_vlan_config port_vlans[MAX_PORTS_CONFIG] = PORT_VLAN_CONFIG_INIT;
+
+// ATE mode VLAN configuration (loaded at runtime if ATE mode selected)
+static const struct port_vlan_config ate_port_vlans[MAX_PORTS_CONFIG] = ATE_PORT_VLAN_CONFIG_INIT;
+
+void port_vlans_load_config(bool ate_mode)
+{
+    if (ate_mode) {
+        memcpy(port_vlans, ate_port_vlans, sizeof(port_vlans));
+        printf("[ATE] ATE mode VLAN configuration loaded\n");
+    } else {
+        // Already initialized with normal config at compile time
+        printf("[CONFIG] Normal mode VLAN configuration active\n");
+    }
+}
 
 // Global RX statistics per port
 struct rx_stats rx_stats_per_port[MAX_PORTS];

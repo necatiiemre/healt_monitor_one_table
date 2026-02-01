@@ -107,6 +107,9 @@ int main(int argc, char const *argv[])
     // 3. Combined results: unit_latency = total - switch
     int latency_fails = emb_latency_full_sequence();
 
+    // Load appropriate VLAN config based on ATE mode selection
+    port_vlans_load_config(ate_mode_enabled());
+
     if (emb_latency_completed()) {
         if (latency_fails > 0) {
             printf("\n*** WARNING: %d test(s) failed! ***\n\n", latency_fails);
