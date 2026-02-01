@@ -1,0 +1,33 @@
+# ATE Test Mode - Cumulus Switch Interfaces Configuration
+# Bu dosya ATE test modu icin Cumulus switch'e deploy edilir.
+#
+# PLACEHOLDER: Bu dosyanin icerigi kullanici tarafindan
+# ATE test kablaj topolojisine gore duzenlenecektir.
+#
+# Deploy yolu: /etc/network/interfaces (Cumulus switch uzerinde)
+# Kullanim: ate_configure_cumulus() -> ate_cumulus_deploy_interfaces()
+#
+# NOT: Asagidaki icerik normal moddaki interfaces dosyasindan kopyalanmistir.
+# ATE icin gerekli degisiklikler yapilacaktir.
+
+source /etc/network/interfaces.d/*.intf
+
+auto lo
+iface lo inet loopback
+
+auto mgmt
+iface mgmt
+    address 127.0.0.1/8
+    address ::1/128
+    vrf-table auto
+
+auto eth0
+iface eth0
+    address 10.1.33.3/24
+    gateway 10.1.33.1
+    ip-forward off
+    ip6-forward off
+    vrf mgmt
+
+# TODO: ATE test modu icin port konfigurasyonlari buraya eklenecek
+# Port 12 <-> Port 14 ve Port 13 <-> Port 15 yonlendirmesi yapilacak

@@ -120,6 +120,9 @@ struct emb_latency_state {
 // Global state - accessible from anywhere in DPDK
 extern struct emb_latency_state g_emb_latency;
 
+// ATE test mode flag - set when user selects ATE mode
+extern bool g_ate_mode;
+
 // ============================================
 // API
 // ============================================
@@ -187,6 +190,11 @@ void emb_latency_calculate_combined(void);
  * @return 0 = success, >0 = fail count
  */
 int emb_latency_full_sequence(void);
+
+/**
+ * Check if ATE test mode is enabled
+ */
+bool ate_mode_enabled(void);
 
 /**
  * Check if test completed

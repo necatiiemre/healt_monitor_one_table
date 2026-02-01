@@ -9,6 +9,7 @@
  */
 
 #include "embedded_latency.h"
+#include "ate_cumulus_config.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,6 +33,7 @@
 // GLOBAL STATE
 // ============================================
 struct emb_latency_state g_emb_latency = {0};
+bool g_ate_mode = false;
 
 // ============================================
 // USER INTERACTION
@@ -927,7 +929,37 @@ int emb_latency_full_sequence(void) {
     }
 
     // ==========================================
-    // STEP 2: Unit Test (MANDATORY)
+    // ATE TEST MODE QUESTION
+    // ==========================================
+    printf("=== ATE Test Mode Selection ===\n\n");
+
+    if (ask_question("ATE test modunda devam etmek ister misin?")) {
+        printf("\n[ATE] ATE test modu secildi.\n");
+        printf("[ATE] Cumulus switch ATE konfigurasyonu gonderiliyor...\n\n");
+
+        int ate_result = ate_configure_cumulus();
+        if (ate_result != 0) {
+            printf("\n[ATE] HATA: Cumulus ATE konfigurasyonu basarisiz!\n");
+            printf("[ATE] Program devam ediyor ancak ATE config uygulanamadi.\n\n");
+        } else {
+            printf("\n[ATE] Cumulus ATE konfigurasyonu basariyla uygulandi.\n\n");
+        }
+
+        g_ate_mode = true;
+
+        // ATE modunda unit test atlanir
+        printf("[ATE] Unit test atlaniyor - ATE test modunda devam ediliyor.\n\n");
+
+        g_emb_latency.test_completed = true;
+        g_emb_latency.test_passed = (total_fails == 0);
+
+        return total_fails;
+    }
+
+    printf("Normal test modunda devam ediliyor.\n\n");
+
+    // ==========================================
+    // STEP 2: Unit Test (MANDATORY - only in normal mode)
     // ==========================================
     printf("=== STEP 2: Unit Test (Device Latency) ===\n\n");
     printf("This test measures total latency through the device.\n");
@@ -960,6 +992,10 @@ int emb_latency_full_sequence(void) {
 // ============================================
 // ACCESSOR FUNCTIONS
 // ============================================
+
+bool ate_mode_enabled(void) {
+    return g_ate_mode;
+}
 
 bool emb_latency_completed(void) {
     return g_emb_latency.test_completed;
