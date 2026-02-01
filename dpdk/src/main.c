@@ -334,27 +334,31 @@ int main(int argc, char const *argv[])
 #endif
 
 #if DPDK_EXT_TX_ENABLED
-    // *** DPDK EXTERNAL TX INITIALIZATION (BEFORE start_txrx_workers!) ***
-    // Must be called before start_txrx_workers so ext_tx_enabled can be set
-    printf("\n=== Initializing DPDK External TX System ===\n");
+    if (!ate_mode_enabled()) {
+        // *** DPDK EXTERNAL TX INITIALIZATION (BEFORE start_txrx_workers!) ***
+        // Must be called before start_txrx_workers so ext_tx_enabled can be set
+        printf("\n=== Initializing DPDK External TX System ===\n");
 
-    // Gather mbuf pools for external TX ports
-    // Port order in ext_tx_configs: Port 2,3,4,5 (→P12), Port 0,6 (→P13)
-    static struct dpdk_ext_tx_port_config ext_configs[] = DPDK_EXT_TX_PORTS_CONFIG_INIT;
-    struct rte_mempool *ext_mbuf_pools[DPDK_EXT_TX_PORT_COUNT];
-    for (int i = 0; i < DPDK_EXT_TX_PORT_COUNT; i++) {
-        uint16_t port_id = ext_configs[i].port_id;
-        if (port_id < nb_ports) {
-            ext_mbuf_pools[i] = txrx_configs[port_id].mbuf_pool;
-            printf("  Ext TX Port %u: mbuf_pool from txrx_configs[%u]\n", port_id, port_id);
-        } else {
-            ext_mbuf_pools[i] = NULL;
-            printf("  Ext TX Port %u: mbuf_pool = NULL (port_id >= nb_ports)\n", port_id);
+        // Gather mbuf pools for external TX ports
+        // Port order in ext_tx_configs: Port 2,3,4,5 (→P12), Port 0,6 (→P13)
+        static struct dpdk_ext_tx_port_config ext_configs[] = DPDK_EXT_TX_PORTS_CONFIG_INIT;
+        struct rte_mempool *ext_mbuf_pools[DPDK_EXT_TX_PORT_COUNT];
+        for (int i = 0; i < DPDK_EXT_TX_PORT_COUNT; i++) {
+            uint16_t port_id = ext_configs[i].port_id;
+            if (port_id < nb_ports) {
+                ext_mbuf_pools[i] = txrx_configs[port_id].mbuf_pool;
+                printf("  Ext TX Port %u: mbuf_pool from txrx_configs[%u]\n", port_id, port_id);
+            } else {
+                ext_mbuf_pools[i] = NULL;
+                printf("  Ext TX Port %u: mbuf_pool = NULL (port_id >= nb_ports)\n", port_id);
+            }
         }
-    }
 
-    if (dpdk_ext_tx_init(ext_mbuf_pools) != 0) {
-        printf("Warning: DPDK External TX initialization failed\n");
+        if (dpdk_ext_tx_init(ext_mbuf_pools) != 0) {
+            printf("Warning: DPDK External TX initialization failed\n");
+        }
+    } else {
+        printf("\n=== DPDK External TX DISABLED (ATE mode) ===\n");
     }
 #endif
 
@@ -448,13 +452,15 @@ int main(int argc, char const *argv[])
     // Start DPDK External TX workers AFTER raw socket workers
     // This ensures Port 12 RX is ready before receiving packets from Port 2,3,4,5
 #if DPDK_EXT_TX_ENABLED
-    printf("\n=== Starting DPDK External TX Workers ===\n");
-    printf("(Started after raw socket RX to prevent initial packet loss)\n");
-    int ext_ret = dpdk_ext_tx_start_workers(&ports_config, &force_quit);
-    if (ext_ret != 0)
-    {
-        printf("Error starting external TX workers: %d\n", ext_ret);
-        // Continue anyway, this is not fatal
+    if (!ate_mode_enabled()) {
+        printf("\n=== Starting DPDK External TX Workers ===\n");
+        printf("(Started after raw socket RX to prevent initial packet loss)\n");
+        int ext_ret = dpdk_ext_tx_start_workers(&ports_config, &force_quit);
+        if (ext_ret != 0)
+        {
+            printf("Error starting external TX workers: %d\n", ext_ret);
+            // Continue anyway, this is not fatal
+        }
     }
 #endif
 
