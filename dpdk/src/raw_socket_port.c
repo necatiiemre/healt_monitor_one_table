@@ -1266,6 +1266,15 @@ void *raw_rx_worker(void *arg)
         }
         empty_polls = 0;  // Reset on successful packet
 
+        // Skip our own outgoing TX packets (kernel marks them as PACKET_OUTGOING)
+        struct sockaddr_ll *sll = (struct sockaddr_ll *)(
+            (uint8_t *)hdr + TPACKET_ALIGN(sizeof(struct tpacket2_hdr)));
+        if (sll->sll_pkttype == PACKET_OUTGOING) {
+            hdr->tp_status = TP_STATUS_KERNEL;
+            port->rx_ring_offset = (port->rx_ring_offset + 1) % RAW_SOCKET_RING_FRAME_NR;
+            continue;
+        }
+
         uint8_t *pkt_data = (uint8_t *)hdr + hdr->tp_mac;
         uint32_t pkt_len = hdr->tp_len;
 
@@ -1675,6 +1684,15 @@ void *multi_queue_rx_worker(void *arg)
             continue;
         }
         empty_polls = 0;
+
+        // Skip our own outgoing TX packets (kernel marks them as PACKET_OUTGOING)
+        struct sockaddr_ll *sll = (struct sockaddr_ll *)(
+            (uint8_t *)hdr + TPACKET_ALIGN(sizeof(struct tpacket2_hdr)));
+        if (sll->sll_pkttype == PACKET_OUTGOING) {
+            hdr->tp_status = TP_STATUS_KERNEL;
+            queue->ring_offset = (queue->ring_offset + 1) % RAW_SOCKET_RING_FRAME_NR;
+            continue;
+        }
 
         uint8_t *pkt_data = (uint8_t *)hdr + hdr->tp_mac;
         uint32_t pkt_len = hdr->tp_len;
