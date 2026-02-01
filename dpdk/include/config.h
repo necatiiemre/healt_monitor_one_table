@@ -309,14 +309,14 @@ struct port_vlan_config
 #define ATE_PORT_VLAN_CONFIG_INIT                                                                                                                                                                           \
   {                                                                                                                                                                                                         \
     /* Port 0 */                                                                                                                                                                                            \
-    {.tx_vlans = {105, 106, 107, 108}, .tx_vlan_count = 4, .rx_vlans = {253, 254, 255, 256}, .rx_vlan_count = 4, .tx_vl_ids = {1027, 1155, 1283, 1411}, .rx_vl_ids = {3, 131, 259, 387}},     /* Port 1 */  \
-        {.tx_vlans = {109, 110, 111, 112}, .tx_vlan_count = 4, .rx_vlans = {249, 250, 251, 252}, .rx_vlan_count = 4, .tx_vl_ids = {1539, 1667, 1795, 1923}, .rx_vl_ids = {3, 131, 259, 387}}, /* Port 2 */  \
-        {.tx_vlans = {97, 98, 99, 100}, .tx_vlan_count = 4, .rx_vlans = {245, 246, 247, 248}, .rx_vlan_count = 4, .tx_vl_ids = {3, 131, 259, 387}, .rx_vl_ids = {3, 131, 259, 387}},          /* Port 3 */  \
-        {.tx_vlans = {101, 102, 103, 104}, .tx_vlan_count = 4, .rx_vlans = {241, 242, 243, 244}, .rx_vlan_count = 4, .tx_vl_ids = {515, 643, 771, 899}, .rx_vl_ids = {3, 131, 259, 387}},     /* Port 4 */  \
-        {.tx_vlans = {113, 114, 115, 116}, .tx_vlan_count = 4, .rx_vlans = {229, 230, 231, 232}, .rx_vlan_count = 4, .tx_vl_ids = {2051, 2179, 2307, 2435}, .rx_vl_ids = {3, 131, 259, 387}}, /* Port 5 */  \
-        {.tx_vlans = {117, 118, 119, 120}, .tx_vlan_count = 4, .rx_vlans = {225, 226, 227, 228}, .rx_vlan_count = 4, .tx_vl_ids = {2563, 2691, 2819, 2947}, .rx_vl_ids = {3, 131, 259, 387}}, /* Port 6 */  \
-        {.tx_vlans = {121, 122, 123, 124}, .tx_vlan_count = 4, .rx_vlans = {237, 238, 239, 240}, .rx_vlan_count = 4, .tx_vl_ids = {3075, 3203, 3331, 3459}, .rx_vl_ids = {3, 131, 259, 387}}, /* Port 7 */  \
-        {.tx_vlans = {125, 126, 127, 128}, .tx_vlan_count = 4, .rx_vlans = {233, 234, 235, 236}, .rx_vlan_count = 4, .tx_vl_ids = {3587, 3715, 3843, 3971}, .rx_vl_ids = {3, 131, 259, 387}}, /* Port 8 */  \
+    {.tx_vlans = {105, 106, 107, 108}, .tx_vlan_count = 4, .rx_vlans = {237, 238, 239, 240}, .rx_vlan_count = 4, .tx_vl_ids = {1027, 1155, 1283, 1411}, .rx_vl_ids = {3, 131, 259, 387}},     /* Port 1 */  \
+        {.tx_vlans = {109, 110, 111, 112}, .tx_vlan_count = 4, .rx_vlans = {233, 234, 235, 236}, .rx_vlan_count = 4, .tx_vl_ids = {1539, 1667, 1795, 1923}, .rx_vl_ids = {3, 131, 259, 387}}, /* Port 2 */  \
+        {.tx_vlans = {97, 98, 99, 100}, .tx_vlan_count = 4, .rx_vlans = {229, 230, 231, 232}, .rx_vlan_count = 4, .tx_vl_ids = {3, 131, 259, 387}, .rx_vl_ids = {3, 131, 259, 387}},          /* Port 3 */  \
+        {.tx_vlans = {101, 102, 103, 104}, .tx_vlan_count = 4, .rx_vlans = {225, 226, 227, 228}, .rx_vlan_count = 4, .tx_vl_ids = {515, 643, 771, 899}, .rx_vl_ids = {3, 131, 259, 387}},     /* Port 4 */  \
+        {.tx_vlans = {113, 114, 115, 116}, .tx_vlan_count = 4, .rx_vlans = {245, 246, 247, 248}, .rx_vlan_count = 4, .tx_vl_ids = {2051, 2179, 2307, 2435}, .rx_vl_ids = {3, 131, 259, 387}}, /* Port 5 */  \
+        {.tx_vlans = {117, 118, 119, 120}, .tx_vlan_count = 4, .rx_vlans = {241, 242, 243, 244}, .rx_vlan_count = 4, .tx_vl_ids = {2563, 2691, 2819, 2947}, .rx_vl_ids = {3, 131, 259, 387}}, /* Port 6 */  \
+        {.tx_vlans = {121, 122, 123, 124}, .tx_vlan_count = 4, .rx_vlans = {253, 254, 255, 256}, .rx_vlan_count = 4, .tx_vl_ids = {3075, 3203, 3331, 3459}, .rx_vl_ids = {3, 131, 259, 387}}, /* Port 7 */  \
+        {.tx_vlans = {125, 126, 127, 128}, .tx_vlan_count = 4, .rx_vlans = {249, 250, 251, 252}, .rx_vlan_count = 4, .tx_vl_ids = {3587, 3715, 3843, 3971}, .rx_vl_ids = {3, 131, 259, 387}}, /* Port 8 */  \
         {.tx_vlans = {129, 130, 131, 132}, .tx_vlan_count = 4, .rx_vlans = {133, 134, 135, 136}, .rx_vlan_count = 4, .tx_vl_ids = {3, 131, 259, 387}, .rx_vl_ids = {3, 131, 259, 387}},       /* Port 9 */  \
         {.tx_vlans = {129, 130, 131, 132}, .tx_vlan_count = 4, .rx_vlans = {133, 134, 135, 136}, .rx_vlan_count = 4, .tx_vl_ids = {3, 131, 259, 387}, .rx_vl_ids = {3, 131, 259, 387}},       /* Port 10 */ \
         {.tx_vlans = {137, 138, 139, 140}, .tx_vlan_count = 4, .rx_vlans = {141, 142, 143, 144}, .rx_vlan_count = 4, .tx_vl_ids = {3, 131, 259, 387}, .rx_vl_ids = {3, 131, 259, 387}},                     \
