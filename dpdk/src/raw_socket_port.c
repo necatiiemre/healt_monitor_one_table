@@ -1052,7 +1052,7 @@ void *raw_tx_worker(void *arg)
     uint32_t batch_count = 0;
     const uint32_t BATCH_SIZE = 64;  // Batch for kernel efficiency
     const uint32_t MAX_CATCHUP_PER_TARGET = 512;  // Max packets per target per iteration (catch-up limit)
-    const uint64_t STATS_FLUSH_INTERVAL = 8192;   // Flush local stats every N packets
+    const uint64_t STATS_FLUSH_INTERVAL = 1024;    // Flush local stats every N packets (smaller = more accurate rate display)
 
     // Local stats accumulators per target (avoid per-packet lock)
     uint64_t local_tx_packets[MAX_RAW_TARGETS] = {0};
