@@ -815,10 +815,13 @@ static void init_tx_test_counters(void)
            TX_WAIT_FOR_RX_FLUSH_MS);
 }
 
+// TX burst size - 8 paketlik burst ile PCIe doorbell overhead azaltılır
+#define TX_BURST_PKT_COUNT 8
+
 int tx_worker(void *arg)
 {
     struct tx_worker_params *params = (struct tx_worker_params *)arg;
-    struct rte_mbuf *pkt;  // Tek paket modu (burst yerine)
+    struct rte_mbuf *pkts[TX_BURST_PKT_COUNT];
     bool first_pkt_sent = false;
 
 #if VLAN_ENABLED
@@ -851,7 +854,7 @@ int tx_worker(void *arg)
 #endif
 
     // ==========================================
-    // SMOOTH PACING SETUP (1 saniyeye yayılmış trafik)
+    // SMOOTH PACING SETUP (burst tabanlı - 8 paketlik gruplar)
     // ==========================================
     uint64_t tsc_hz = rte_get_tsc_hz();
 
@@ -863,10 +866,12 @@ int tx_worker(void *arg)
     const uint64_t avg_bytes_per_packet = PACKET_SIZE;
 #endif
     uint64_t packets_per_sec = params->limiter.tokens_per_sec / avg_bytes_per_packet;
-    uint64_t delay_cycles = (packets_per_sec > 0) ? (tsc_hz / packets_per_sec) : tsc_hz;
+    // Burst bazlı delay: 8 paket aralığı kadar bekle
+    uint64_t delay_per_pkt = (packets_per_sec > 0) ? (tsc_hz / packets_per_sec) : tsc_hz;
+    uint64_t burst_delay_cycles = delay_per_pkt * TX_BURST_PKT_COUNT;
 
-    // Mikrosaniye cinsinden paket arası süre
-    double inter_packet_us = (double)delay_cycles * 1000000.0 / (double)tsc_hz;
+    // Mikrosaniye cinsinden burst arası süre
+    double burst_interval_us = (double)burst_delay_cycles * 1000000.0 / (double)tsc_hz;
 
     // Stagger: Her port/queue farklı zamanda başlar
     uint32_t stagger_slot = (params->port_id * 4 + params->queue_id) % 16;
@@ -880,10 +885,11 @@ int tx_worker(void *arg)
     printf("  -> IMIX pattern: 100, 200, 400, 800, 1200x3, 1518x3 (avg=%lu bytes)\n", avg_bytes_per_packet);
     printf("  -> Worker offset: %u (hybrid shuffle)\n", imix_offset);
 #else
-    printf("  *** SMOOTH PACING - 1 saniyeye yayılmış trafik ***\n");
+    printf("  *** BURST PACING - %d paketlik burst ile smooth trafik ***\n", TX_BURST_PKT_COUNT);
 #endif
-    printf("  -> Pacing: %.1f us/paket (%.0f paket/s), stagger=%ums\n",
-           inter_packet_us, (double)packets_per_sec, (unsigned)(stagger_offset * 1000 / tsc_hz));
+    printf("  -> Pacing: %.1f us/burst (%d pkt/burst, %.0f pkt/s), stagger=%ums\n",
+           burst_interval_us, TX_BURST_PKT_COUNT, (double)packets_per_sec,
+           (unsigned)(stagger_offset * 1000 / tsc_hz));
     printf("  VL-ID Based Sequence: Each VL-ID has independent sequence counter\n");
     printf("  Strategy: Round-robin through ALL VL-IDs in range (%u VL-IDs)\n", vl_range_size);
 
@@ -923,8 +929,8 @@ int tx_worker(void *arg)
 #endif
 
         // ==========================================
-        // SMOOTH PACING: Her paket tam zamanında gönderilir
-        // Burst YOK - trafik 1 saniyeye eşit yayılır
+        // BURST PACING: 8 paket hazırla, toplu gönder
+        // PCIe doorbell overhead 8x azalır
         // ==========================================
         uint64_t now = rte_get_tsc_cycles();
 
@@ -934,91 +940,108 @@ int tx_worker(void *arg)
             now = rte_get_tsc_cycles();
         }
 
-        // Geride kalırsak CATCH-UP YAPMA (burst önleme)
-        if (next_send_time + delay_cycles < now) {
+        // Geride kalırsak reset (aşırı burst önleme)
+        if (next_send_time + burst_delay_cycles < now) {
             next_send_time = now;
         }
-        next_send_time += delay_cycles;
+        next_send_time += burst_delay_cycles;
 
-        // Tek paket tahsisi
-        pkt = rte_pktmbuf_alloc(params->mbuf_pool);
-        if (unlikely(pkt == NULL)) {
-            continue;  // Timing korundu, sadece bu slot'u atla
-        }
+        // ==========================================
+        // 8 paketlik burst hazırla
+        // ==========================================
+        uint16_t burst_count = 0;
+
+        for (uint16_t b = 0; b < TX_BURST_PKT_COUNT; b++)
+        {
+            struct rte_mbuf *m = rte_pktmbuf_alloc(params->mbuf_pool);
+            if (unlikely(m == NULL)) {
+                break;  // Kalan paketleri gönder
+            }
 
 #if TX_TEST_MODE_ENABLED
-        uint64_t port_count = rte_atomic64_read(&tx_packet_count_per_port[params->port_id]);
-        if (port_count >= TX_MAX_PACKETS_PER_PORT)
-        {
-            rte_pktmbuf_free(pkt);
-            continue;
-        }
-        uint64_t pkt_num = rte_atomic64_add_return(&tx_packet_count_per_port[params->port_id], 1);
-        local_pkt_counter++;
+            uint64_t port_count = rte_atomic64_read(&tx_packet_count_per_port[params->port_id]);
+            if (port_count >= TX_MAX_PACKETS_PER_PORT)
+            {
+                rte_pktmbuf_free(m);
+                break;
+            }
+            uint64_t pkt_num = rte_atomic64_add_return(&tx_packet_count_per_port[params->port_id], 1);
+            local_pkt_counter++;
 
-        uint16_t curr_vl = vl_start + current_vl_offset;
-        uint64_t seq = get_next_tx_sequence(params->port_id, curr_vl);
+            uint16_t curr_vl = vl_start + current_vl_offset;
+            uint64_t seq = get_next_tx_sequence(params->port_id, curr_vl);
 
-        if (pkt_num % TX_SKIP_EVERY_N_PACKETS == 0)
-        {
-            printf("TX Worker Port %u: SKIPPING packet #%lu (VL %u, seq %lu)\n",
-                   params->port_id, pkt_num, curr_vl, seq);
-            rte_pktmbuf_free(pkt);
+            if (pkt_num % TX_SKIP_EVERY_N_PACKETS == 0)
+            {
+                printf("TX Worker Port %u: SKIPPING packet #%lu (VL %u, seq %lu)\n",
+                       params->port_id, pkt_num, curr_vl, seq);
+                rte_pktmbuf_free(m);
+                current_vl_offset++;
+                if (current_vl_offset >= vl_range_size)
+                    current_vl_offset = 0;
+                continue;  // Bu paketi atla, sonrakine geç
+            }
+#else
+            uint16_t curr_vl = vl_start + current_vl_offset;
+            uint64_t seq = get_next_tx_sequence(params->port_id, curr_vl);
+#endif
+
+            // Paket oluştur
+            struct packet_config cfg = params->pkt_config;
+            cfg.vl_id = curr_vl;
+            cfg.dst_mac.addr_bytes[0] = 0x03;
+            cfg.dst_mac.addr_bytes[1] = 0x00;
+            cfg.dst_mac.addr_bytes[2] = 0x00;
+            cfg.dst_mac.addr_bytes[3] = 0x00;
+            cfg.dst_mac.addr_bytes[4] = (uint8_t)((curr_vl >> 8) & 0xFF);
+            cfg.dst_mac.addr_bytes[5] = (uint8_t)(curr_vl & 0xFF);
+            cfg.dst_ip = (uint32_t)((224U << 24) | (224U << 16) |
+                                    ((uint32_t)((curr_vl >> 8) & 0xFF) << 8) |
+                                    (uint32_t)(curr_vl & 0xFF));
+
+#if IMIX_ENABLED
+            // IMIX: Paket boyutunu pattern'den al
+            uint16_t pkt_size = get_imix_packet_size(imix_counter, imix_offset);
+            uint16_t prbs_len = calc_prbs_size(pkt_size);
+            imix_counter++;
+
+            // Dinamik boyutlu paket oluştur
+            build_packet_dynamic(m, &cfg, pkt_size);
+            fill_payload_with_prbs31_dynamic(m, params->port_id, seq, l2_len, prbs_len);
+#else
+            build_packet_mbuf(m, &cfg);
+            fill_payload_with_prbs31(m, params->port_id, seq, l2_len);
+#endif
+
+            // burst_count dizin olarak kullan (boşluk olmaz)
+            pkts[burst_count] = m;
+            burst_count++;
             current_vl_offset++;
             if (current_vl_offset >= vl_range_size)
                 current_vl_offset = 0;
-            continue;
         }
-#else
-        uint16_t curr_vl = vl_start + current_vl_offset;
-        uint64_t seq = get_next_tx_sequence(params->port_id, curr_vl);
-#endif
 
-        // Paket oluştur
-        struct packet_config cfg = params->pkt_config;
-        cfg.vl_id = curr_vl;
-        cfg.dst_mac.addr_bytes[0] = 0x03;
-        cfg.dst_mac.addr_bytes[1] = 0x00;
-        cfg.dst_mac.addr_bytes[2] = 0x00;
-        cfg.dst_mac.addr_bytes[3] = 0x00;
-        cfg.dst_mac.addr_bytes[4] = (uint8_t)((curr_vl >> 8) & 0xFF);
-        cfg.dst_mac.addr_bytes[5] = (uint8_t)(curr_vl & 0xFF);
-        cfg.dst_ip = (uint32_t)((224U << 24) | (224U << 16) |
-                                ((uint32_t)((curr_vl >> 8) & 0xFF) << 8) |
-                                (uint32_t)(curr_vl & 0xFF));
-
-#if IMIX_ENABLED
-        // IMIX: Paket boyutunu pattern'den al
-        uint16_t pkt_size = get_imix_packet_size(imix_counter, imix_offset);
-        uint16_t prbs_len = calc_prbs_size(pkt_size);
-        imix_counter++;
-
-        // Dinamik boyutlu paket oluştur
-        build_packet_dynamic(pkt, &cfg, pkt_size);
-        fill_payload_with_prbs31_dynamic(pkt, params->port_id, seq, l2_len, prbs_len);
-#else
-        build_packet_mbuf(pkt, &cfg);
-        fill_payload_with_prbs31(pkt, params->port_id, seq, l2_len);
-#endif
-
-        // Tek paket gönder
-        uint16_t nb_tx = rte_eth_tx_burst(params->port_id, params->queue_id, &pkt, 1);
-
-        if (unlikely(!first_pkt_sent && nb_tx > 0))
+        // ==========================================
+        // Burst gönder - tek rte_eth_tx_burst çağrısı
+        // ==========================================
+        if (likely(burst_count > 0))
         {
-            printf("TX Worker: First packet sent on Port %u Queue %u\n",
-                   params->port_id, params->queue_id);
-            first_pkt_sent = true;
-        }
+            uint16_t nb_tx = rte_eth_tx_burst(params->port_id, params->queue_id,
+                                               pkts, burst_count);
 
-        if (unlikely(nb_tx == 0))
-        {
-            rte_pktmbuf_free(pkt);
-        }
+            if (unlikely(!first_pkt_sent && nb_tx > 0))
+            {
+                printf("TX Worker: First burst sent on Port %u Queue %u (%u pkts)\n",
+                       params->port_id, params->queue_id, nb_tx);
+                first_pkt_sent = true;
+            }
 
-        current_vl_offset++;
-        if (current_vl_offset >= vl_range_size)
-            current_vl_offset = 0;
+            // Gönderilemeyen paketleri free et
+            for (uint16_t i = nb_tx; i < burst_count; i++)
+            {
+                rte_pktmbuf_free(pkts[i]);
+            }
+        }
     }
 
 #if TX_TEST_MODE_ENABLED
