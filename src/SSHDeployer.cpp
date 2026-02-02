@@ -824,54 +824,67 @@ bool SSHDeployer::deployAndBuild(const std::string& local_source_dir,
 bool SSHDeployer::stopApplication(const std::string& app_name, bool use_sudo) {
     std::cout << getLogPrefix() << " Stopping application: " << app_name << std::endl;
 
-    // Combine sudo auth + kill in single command to avoid credential expiry
-    // Use shell script approach for reliability
-    std::string kill_script;
+    // Step 1: Send SIGTERM for graceful shutdown
+    std::string term_cmd;
     if (use_sudo) {
-        // Single command: auth sudo, then kill with SIGTERM, wait, then SIGKILL if needed
-        kill_script = "echo '" + m_password + "' | sudo -S -v 2>/dev/null && "
-                      "sudo pkill -TERM -f " + app_name + " 2>/dev/null; "
-                      "sleep 1; "
-                      "sudo pkill -9 -f " + app_name + " 2>/dev/null; "
-                      "echo KILL_DONE";
+        term_cmd = "echo '" + m_password + "' | sudo -S -v 2>/dev/null && "
+                   "sudo pkill -TERM -f " + app_name + " 2>/dev/null; "
+                   "echo TERM_SENT";
     } else {
-        kill_script = "pkill -TERM -f " + app_name + " 2>/dev/null; "
-                      "sleep 1; "
-                      "pkill -9 -f " + app_name + " 2>/dev/null; "
-                      "echo KILL_DONE";
+        term_cmd = "pkill -TERM -f " + app_name + " 2>/dev/null; "
+                   "echo TERM_SENT";
     }
 
-    std::string ssh_cmd = buildSSHCommand(kill_script);
-    std::cout << getLogPrefix() << " Executing kill command..." << std::endl;
+    std::string ssh_cmd = buildSSHCommand(term_cmd);
+    std::cout << getLogPrefix() << " Sending SIGTERM..." << std::endl;
     auto result = g_systemCommand.execute(ssh_cmd);
+    std::cout << getLogPrefix() << " SIGTERM result: " << result.output << std::endl;
 
-    // Debug output
-    std::cout << getLogPrefix() << " Kill result: " << (result.success ? "OK" : "FAIL")
-              << " output: " << result.output << std::endl;
+    // Step 2: Wait for process to exit gracefully (up to 60 seconds)
+    const int max_wait_seconds = 60;
+    std::cout << getLogPrefix() << " Waiting for graceful shutdown (max "
+              << max_wait_seconds << "s)..." << std::endl;
 
-    // Wait a moment
-    usleep(500000);  // 500ms
+    for (int i = 0; i < max_wait_seconds; i++) {
+        usleep(1000000);  // 1 second
 
-    // Verify process is stopped
-    if (isApplicationRunning(app_name)) {
-        std::cerr << getLogPrefix() << " WARNING: Process might still be running!" << std::endl;
+        if (!isApplicationRunning(app_name)) {
+            std::cout << getLogPrefix() << " Application stopped gracefully after "
+                      << (i + 1) << " seconds" << std::endl;
+            return true;
+        }
 
-        // Last resort: try killall
-        std::string killall_cmd = use_sudo
-            ? "echo '" + m_password + "' | sudo -S killall -9 " + app_name + " 2>/dev/null || true"
-            : "killall -9 " + app_name + " 2>/dev/null || true";
-
-        ssh_cmd = buildSSHCommand(killall_cmd);
-        g_systemCommand.execute(ssh_cmd);
-        usleep(500000);
-
-        if (isApplicationRunning(app_name)) {
-            std::cerr << getLogPrefix() << " FAILED to stop " << app_name << std::endl;
-            return false;
+        // Print progress every 5 seconds
+        if ((i + 1) % 5 == 0) {
+            std::cout << getLogPrefix() << " Still waiting... (" << (i + 1)
+                      << "/" << max_wait_seconds << "s)" << std::endl;
         }
     }
 
-    std::cout << getLogPrefix() << " Application stopped successfully" << std::endl;
+    // Step 3: Timeout exceeded - force kill as last resort
+    std::cerr << getLogPrefix() << " WARNING: Graceful shutdown timed out after "
+              << max_wait_seconds << "s, sending SIGKILL..." << std::endl;
+
+    std::string kill_cmd;
+    if (use_sudo) {
+        kill_cmd = "echo '" + m_password + "' | sudo -S -v 2>/dev/null && "
+                   "sudo pkill -9 -f " + app_name + " 2>/dev/null; "
+                   "echo KILL_DONE";
+    } else {
+        kill_cmd = "pkill -9 -f " + app_name + " 2>/dev/null; "
+                   "echo KILL_DONE";
+    }
+
+    ssh_cmd = buildSSHCommand(kill_cmd);
+    g_systemCommand.execute(ssh_cmd);
+    usleep(1000000);  // 1 second
+
+    if (isApplicationRunning(app_name)) {
+        std::cerr << getLogPrefix() << " FAILED to stop " << app_name << std::endl;
+        return false;
+    }
+
+    std::cout << getLogPrefix() << " Application force-killed successfully" << std::endl;
     return true;
 }
 
