@@ -1,6 +1,7 @@
 #include "tx_rx_manager.h"
 #include "raw_socket_port.h"  // For external packet PRBS verification
 #include "dpdk_external_tx.h" // For integrated external TX
+#include "embedded_latency/embedded_latency.h" // For ate_mode_enabled()
 #include <rte_lcore.h>
 #include <rte_launch.h>
 #include <rte_cycles.h>
@@ -1809,7 +1810,7 @@ int start_txrx_workers(struct ports_config *ports_config, volatile bool *stop_fl
                 continue;
             }
 
-            double port_target_gbps = GET_PORT_TARGET_GBPS(port_id);
+            double port_target_gbps = ate_mode_enabled() ? TARGET_GBPS_FAST : GET_PORT_TARGET_GBPS(port_id);
             init_rate_limiter(&tx_params[tx_param_idx].limiter, port_target_gbps, NUM_TX_CORES);
 
             uint16_t tx_vlan = get_tx_vlan_for_queue(port_id, q);
