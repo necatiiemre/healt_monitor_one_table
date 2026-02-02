@@ -286,8 +286,8 @@ bool raw_check_smooth_pacing(struct raw_rate_limiter *limiter)
         return false;
     }
 
-    // If we're too far behind (>2ms), reset to now (prevents large burst)
-    if (limiter->next_send_time_ns + 2000000ULL < now) {
+    // If we're too far behind (>10ms), reset to now (prevents large burst)
+    if (limiter->next_send_time_ns + 10000000ULL < now) {
         limiter->next_send_time_ns = now;
     }
 
@@ -1027,7 +1027,7 @@ void *raw_tx_worker(void *arg)
 
     uint32_t batch_count = 0;
     const uint32_t BATCH_SIZE = 64;  // Batch for kernel efficiency
-    const uint32_t MAX_CATCHUP_PER_TARGET = 32;  // Max packets per target per iteration (catch-up limit)
+    const uint32_t MAX_CATCHUP_PER_TARGET = 512;  // Max packets per target per iteration (catch-up limit)
 
     while (!port->stop_flag && (g_stop_flag == NULL || !*g_stop_flag)) {
         bool any_sent = false;
