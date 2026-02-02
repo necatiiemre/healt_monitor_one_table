@@ -686,8 +686,12 @@ int init_port_txrx(uint16_t port_id, struct txrx_config *config)
         uint16_t reta_size = dev_info.reta_size;
         if (reta_size > 0)
         {
-            printf("Port %u: Configuring RETA (size: %u) for %u queues\n",
-                   port_id, reta_size, config->nb_rx_queues);
+            // RSS sadece data RX queue'larına (0..NUM_RX_CORES-1) dağıtmalı.
+            // PTP queue (5) flow rule ile yönlendiriliyor, RSS'den bağımsız.
+            // nb_rx_queues PTP dahil 6 olabilir, ama data queue sayısı NUM_RX_CORES.
+            const uint16_t num_data_rx_queues = NUM_RX_CORES;
+            printf("Port %u: Configuring RETA (size: %u) for %u data RX queues (total RX queues: %u)\n",
+                   port_id, reta_size, num_data_rx_queues, config->nb_rx_queues);
 
             for (uint16_t i = 0; i < reta_size; i++)
             {
@@ -699,7 +703,7 @@ int init_port_txrx(uint16_t port_id, struct txrx_config *config)
                     reta_conf[idx].mask = ~0ULL;
                 }
 
-                reta_conf[idx].reta[shift] = i % config->nb_rx_queues;
+                reta_conf[idx].reta[shift] = i % num_data_rx_queues;
             }
 
             ret = rte_eth_dev_rss_reta_update(port_id, reta_conf, reta_size);
