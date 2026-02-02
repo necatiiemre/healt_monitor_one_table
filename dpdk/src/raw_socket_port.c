@@ -1075,10 +1075,8 @@ void *raw_tx_worker(void *arg)
                 uint16_t vl_id = target->config.vl_id_start + target->current_vl_offset;
                 uint16_t vl_index = target->current_vl_offset;
 
-                // Get next sequence (thread-safe)
-                pthread_spin_lock(&target->vl_sequences[vl_index].tx_lock);
-                uint64_t seq = target->vl_sequences[vl_index].tx_sequence++;
-                pthread_spin_unlock(&target->vl_sequences[vl_index].tx_lock);
+                // Peek sequence WITHOUT incrementing — commit after frame is placed in ring
+                uint64_t seq = target->vl_sequences[vl_index].tx_sequence;
 
 #if IMIX_ENABLED
                 // IMIX: Paket boyutunu pattern'den al
@@ -1131,6 +1129,9 @@ void *raw_tx_worker(void *arg)
                 memcpy(frame_data, packet_buffer, pkt_size);
                 hdr->tp_len = pkt_size;
                 hdr->tp_status = TP_STATUS_SEND_REQUEST;
+
+                // Commit sequence AFTER frame is placed in ring buffer
+                target->vl_sequences[vl_index].tx_sequence = seq + 1;
 
                 // Local stats accumulation (no lock)
                 local_tx_packets[t]++;

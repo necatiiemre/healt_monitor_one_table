@@ -105,6 +105,24 @@ static inline uint64_t get_ext_tx_sequence(uint16_t port_idx, uint16_t vl_id)
     return ext_tx_sequences[port_idx][vl_id]++;
 }
 
+// Peek without incrementing — for send-then-commit pattern
+static inline uint64_t peek_ext_tx_sequence(uint16_t port_idx, uint16_t vl_id)
+{
+    if (port_idx >= DPDK_EXT_TX_PORT_COUNT || vl_id > MAX_VL_ID) {
+        return 0;
+    }
+    return ext_tx_sequences[port_idx][vl_id];
+}
+
+// Commit after successful send
+static inline void commit_ext_tx_sequence(uint16_t port_idx, uint16_t vl_id)
+{
+    if (port_idx >= DPDK_EXT_TX_PORT_COUNT || vl_id > MAX_VL_ID) {
+        return;
+    }
+    ext_tx_sequences[port_idx][vl_id]++;
+}
+
 int dpdk_ext_tx_get_source_port(uint16_t vl_id)
 {
     // VL-ID ranges must match config.h DPDK_EXT_TX_PORT_*_TARGETS
@@ -345,8 +363,8 @@ int dpdk_ext_tx_worker(void *arg)
         // Move to next target for next packet
         current_target = (current_target + 1) % target_count;
 
-        // Get sequence number
-        uint64_t seq = get_ext_tx_sequence(port_idx, curr_vl);
+        // Peek sequence WITHOUT incrementing — only commit after successful send
+        uint64_t seq = peek_ext_tx_sequence(port_idx, curr_vl);
 
         // ==========================================
         // BUILD ETHERNET HEADER
@@ -445,9 +463,12 @@ int dpdk_ext_tx_worker(void *arg)
         }
 
         if (nb_tx > 0) {
+            // Sequence'ı sadece başarılı gönderimden sonra artır
+            commit_ext_tx_sequence(port_idx, curr_vl);
             local_tx_pkts++;
-            local_tx_bytes += pkt_size;  // Dinamik boyut kullan
+            local_tx_bytes += pkt_size;
         } else {
+            // TX queue dolu — paketi at, sequence artırma (tekrar denenecek)
             rte_pktmbuf_free(pkts[0]);
         }
 

@@ -89,6 +89,30 @@ static inline uint64_t get_next_tx_sequence(uint16_t port_id, uint16_t vl_id)
 }
 
 /**
+ * Peek current sequence for a VL-ID without incrementing (thread-safe)
+ * Use with commit_tx_sequence() for send-then-commit pattern.
+ */
+static inline uint64_t peek_tx_sequence(uint16_t port_id, uint16_t vl_id)
+{
+    if (vl_id > MAX_VL_ID || port_id >= MAX_PORTS)
+        return 0;
+
+    return tx_vl_sequences[port_id].sequence[vl_id];
+}
+
+/**
+ * Commit (increment) sequence for a VL-ID after successful send.
+ * Only call after confirming the packet was actually transmitted.
+ */
+static inline void commit_tx_sequence(uint16_t port_id, uint16_t vl_id)
+{
+    if (vl_id > MAX_VL_ID || port_id >= MAX_PORTS)
+        return;
+
+    tx_vl_sequences[port_id].sequence[vl_id]++;
+}
+
+/**
  * Extract VL-ID from packet DST MAC
  */
 static inline uint16_t extract_vl_id_from_packet(uint8_t *pkt_data, uint16_t l2_len)
@@ -961,21 +985,27 @@ int tx_worker(void *arg)
         local_pkt_counter++;
 
         uint16_t curr_vl = vl_start + current_vl_offset;
-        uint64_t seq = get_next_tx_sequence(params->port_id, curr_vl);
 
         if (pkt_num % TX_SKIP_EVERY_N_PACKETS == 0)
         {
+            // Test mode: intentional skip — consume sequence to create gap
+            uint64_t skip_seq = get_next_tx_sequence(params->port_id, curr_vl);
             printf("TX Worker Port %u: SKIPPING packet #%lu (VL %u, seq %lu)\n",
-                   params->port_id, pkt_num, curr_vl, seq);
+                   params->port_id, pkt_num, curr_vl, skip_seq);
             rte_pktmbuf_free(pkt);
             current_vl_offset++;
             if (current_vl_offset >= vl_range_size)
                 current_vl_offset = 0;
             continue;
         }
+
+        // Peek sequence WITHOUT incrementing — only commit after successful send
+        uint64_t seq = peek_tx_sequence(params->port_id, curr_vl);
 #else
         uint16_t curr_vl = vl_start + current_vl_offset;
-        uint64_t seq = get_next_tx_sequence(params->port_id, curr_vl);
+
+        // Peek sequence WITHOUT incrementing — only commit after successful send
+        uint64_t seq = peek_tx_sequence(params->port_id, curr_vl);
 #endif
 
         // Paket oluştur
@@ -1015,8 +1045,15 @@ int tx_worker(void *arg)
             first_pkt_sent = true;
         }
 
-        if (unlikely(nb_tx == 0))
+        if (likely(nb_tx > 0))
         {
+            // Sequence'ı sadece paket başarıyla gönderildikten sonra artır
+            commit_tx_sequence(params->port_id, curr_vl);
+        }
+        else
+        {
+            // TX queue dolu — paketi at ama sequence'ı artırma
+            // Bir sonraki denemede aynı sequence tekrar kullanılacak
             rte_pktmbuf_free(pkt);
         }
 
