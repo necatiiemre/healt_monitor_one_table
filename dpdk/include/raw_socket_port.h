@@ -239,6 +239,7 @@ struct raw_socket_port {
     bool prbs_initialized;
 
     // Thread control
+    uint16_t tx_cpu_core;                   // Pinned CPU core for TX thread
     pthread_t tx_thread;
     pthread_t rx_thread;                    // Legacy single RX thread (Port 13)
     volatile bool stop_flag;

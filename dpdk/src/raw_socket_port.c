@@ -599,6 +599,17 @@ int setup_raw_tx_ring(struct raw_socket_port *port)
         return -1;
     }
 
+    // Bypass kernel qdisc layer for direct NIC driver access
+    int bypass = 1;
+    if (setsockopt(port->tx_socket, SOL_PACKET, PACKET_QDISC_BYPASS,
+                   &bypass, sizeof(bypass)) < 0) {
+        printf("[Raw Port %d] Warning: PACKET_QDISC_BYPASS not supported: %s\n",
+               port->port_id, strerror(errno));
+    } else {
+        printf("[Raw Port %d] PACKET_QDISC_BYPASS enabled (direct NIC driver TX)\n",
+               port->port_id);
+    }
+
     struct tpacket_req req = {0};
     req.tp_block_size = RAW_SOCKET_RING_BLOCK_SIZE;
     req.tp_block_nr = RAW_SOCKET_RING_BLOCK_NR;
@@ -939,6 +950,19 @@ int init_raw_socket_port(int raw_index, const struct raw_socket_port_config *con
     // Setup TX ring
     if (setup_raw_tx_ring(port) < 0) return -1;
 
+    // Allocate dedicated CPU core for TX thread
+    uint16_t tx_core = 0;
+    int tx_cores_found = get_unused_cores(1, &tx_core);
+    if (tx_cores_found > 0) {
+        port->tx_cpu_core = tx_core;
+        printf("[Port %u] TX thread will be pinned to CPU core %u\n",
+               port->port_id, port->tx_cpu_core);
+    } else {
+        port->tx_cpu_core = 0;
+        printf("[Port %u] Warning: No unused core for TX thread, will float\n",
+               port->port_id);
+    }
+
     // Setup RX - multi-queue for Port 12 and Port 13
     // Port 12: Multi-queue RX for high throughput DPDK external packets
     // Port 13: Multi-queue RX for better packet distribution
@@ -1028,6 +1052,13 @@ void *raw_tx_worker(void *arg)
     uint32_t batch_count = 0;
     const uint32_t BATCH_SIZE = 64;  // Batch for kernel efficiency
     const uint32_t MAX_CATCHUP_PER_TARGET = 512;  // Max packets per target per iteration (catch-up limit)
+    const uint64_t STATS_FLUSH_INTERVAL = 8192;   // Flush local stats every N packets
+
+    // Local stats accumulators per target (avoid per-packet lock)
+    uint64_t local_tx_packets[MAX_RAW_TARGETS] = {0};
+    uint64_t local_tx_bytes[MAX_RAW_TARGETS] = {0};
+    uint64_t local_tx_errors[MAX_RAW_TARGETS] = {0};
+    uint64_t total_local_pkts = 0;
 
     while (!port->stop_flag && (g_stop_flag == NULL || !*g_stop_flag)) {
         bool any_sent = false;
@@ -1101,11 +1132,10 @@ void *raw_tx_worker(void *arg)
                 hdr->tp_len = pkt_size;
                 hdr->tp_status = TP_STATUS_SEND_REQUEST;
 
-                // Update stats
-                pthread_spin_lock(&target->stats.lock);
-                target->stats.tx_packets++;
-                target->stats.tx_bytes += pkt_size;
-                pthread_spin_unlock(&target->stats.lock);
+                // Local stats accumulation (no lock)
+                local_tx_packets[t]++;
+                local_tx_bytes[t] += pkt_size;
+                total_local_pkts++;
 
                 if (!first_tx[t]) {
                     printf("[Port %u TX] Target %d (->P%u): First packet VL-ID=%u Seq=%lu\n",
@@ -1125,9 +1155,7 @@ void *raw_tx_worker(void *arg)
                 // Flush batch periodically
                 if (batch_count >= BATCH_SIZE) {
                     if (send(port->tx_socket, NULL, 0, 0) < 0) {
-                        pthread_spin_lock(&target->stats.lock);
-                        target->stats.tx_errors++;
-                        pthread_spin_unlock(&target->stats.lock);
+                        local_tx_errors[t]++;
                     }
                     batch_count = 0;
                 }
@@ -1140,6 +1168,24 @@ void *raw_tx_worker(void *arg)
             batch_count = 0;
         }
 
+        // Periodically flush local stats to shared counters
+        if (total_local_pkts >= STATS_FLUSH_INTERVAL) {
+            for (int t = 0; t < port->tx_target_count; t++) {
+                if (local_tx_packets[t] > 0) {
+                    struct raw_tx_target_state *target = &port->tx_targets[t];
+                    pthread_spin_lock(&target->stats.lock);
+                    target->stats.tx_packets += local_tx_packets[t];
+                    target->stats.tx_bytes += local_tx_bytes[t];
+                    target->stats.tx_errors += local_tx_errors[t];
+                    pthread_spin_unlock(&target->stats.lock);
+                    local_tx_packets[t] = 0;
+                    local_tx_bytes[t] = 0;
+                    local_tx_errors[t] = 0;
+                }
+            }
+            total_local_pkts = 0;
+        }
+
         if (!any_sent) {
             struct timespec ts = {0, 100};  // 100ns sleep (was 1µs)
             nanosleep(&ts, NULL);
@@ -1147,10 +1193,23 @@ void *raw_tx_worker(void *arg)
     }
 
 exit_tx:
-    // Flush remaining
+    // Flush remaining TX packets
     if (batch_count > 0) {
         send(port->tx_socket, NULL, 0, 0);
     }
+
+    // Final flush of local stats
+    for (int t = 0; t < port->tx_target_count; t++) {
+        if (local_tx_packets[t] > 0) {
+            struct raw_tx_target_state *target = &port->tx_targets[t];
+            pthread_spin_lock(&target->stats.lock);
+            target->stats.tx_packets += local_tx_packets[t];
+            target->stats.tx_bytes += local_tx_bytes[t];
+            target->stats.tx_errors += local_tx_errors[t];
+            pthread_spin_unlock(&target->stats.lock);
+        }
+    }
+
     printf("[Port %u TX Worker] Stopped\n", port->port_id);
     port->tx_running = false;
     return NULL;
@@ -2064,11 +2123,19 @@ int start_raw_socket_workers(volatile bool *stop_flag)
 
     usleep(100000);  // 100ms
 
-    // Start TX workers
+    // Start TX workers with CPU pinning
     for (int i = 0; i < active_raw_port_count; i++) {
         if (pthread_create(&raw_ports[i].tx_thread, NULL, raw_tx_worker, &raw_ports[i]) != 0) {
             fprintf(stderr, "[Port %u] Failed to create TX thread\n", raw_ports[i].port_id);
             return -1;
+        }
+
+        // Pin TX thread to dedicated CPU core
+        if (raw_ports[i].tx_cpu_core > 0) {
+            if (set_thread_cpu_affinity(raw_ports[i].tx_thread, raw_ports[i].tx_cpu_core) == 0) {
+                printf("[Port %u] TX thread pinned to CPU core %u\n",
+                       raw_ports[i].port_id, raw_ports[i].tx_cpu_core);
+            }
         }
     }
 
