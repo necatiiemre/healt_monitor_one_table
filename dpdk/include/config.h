@@ -129,15 +129,15 @@ struct raw_rx_source_config
   uint16_t vl_id_count; // Beklenen VL-ID sayısı
 };
 
-// Port 12 TX Targets (4 hedef, toplam 900 Mbps)
+// Port 12 TX Targets (4 hedef, toplam 880 Mbps)
 // Port 13'e gönderim kaldırıldı, sadece DPDK portlarına (2,3,4,5) gönderim
-// Hız 205 -> 225 Mbps'e yükseltildi
+// 4 × 220 Mbps = 880 Mbps total (1G link, ~89% utilization — safe margin)
 #define PORT_12_TX_TARGET_COUNT 4
 #define PORT_12_TX_TARGETS_INIT {                                                               \
-    {.target_id = 0, .dest_port = 2, .rate_mbps = 240, .vl_id_start = 4259, .vl_id_count = 32}, \
-    {.target_id = 1, .dest_port = 3, .rate_mbps = 240, .vl_id_start = 4227, .vl_id_count = 32}, \
-    {.target_id = 2, .dest_port = 4, .rate_mbps = 240, .vl_id_start = 4195, .vl_id_count = 32}, \
-    {.target_id = 3, .dest_port = 5, .rate_mbps = 240, .vl_id_start = 4163, .vl_id_count = 32}, \
+    {.target_id = 0, .dest_port = 2, .rate_mbps = 220, .vl_id_start = 4259, .vl_id_count = 32}, \
+    {.target_id = 1, .dest_port = 3, .rate_mbps = 220, .vl_id_start = 4227, .vl_id_count = 32}, \
+    {.target_id = 2, .dest_port = 4, .rate_mbps = 220, .vl_id_start = 4195, .vl_id_count = 32}, \
+    {.target_id = 3, .dest_port = 5, .rate_mbps = 220, .vl_id_start = 4163, .vl_id_count = 32}, \
 }
 
 // Port 12 RX Sources (Port 13'ten gelen paketler kaldırıldı)
@@ -560,34 +560,34 @@ struct dpdk_ext_tx_port_config
 // NOTE: Total external TX must not exceed Port 12's 1G capacity
 // 4 ports × 220 Mbps = 880 Mbps total (within 1G limit)
 #define DPDK_EXT_TX_PORT_2_TARGETS {                                                          \
-    {.queue_id = 0, .vlan_id = 97, .vl_id_start = 4291, .vl_id_count = 8, .rate_mbps = 240},  \
-    {.queue_id = 1, .vlan_id = 98, .vl_id_start = 4299, .vl_id_count = 8, .rate_mbps = 240},  \
-    {.queue_id = 2, .vlan_id = 99, .vl_id_start = 4307, .vl_id_count = 8, .rate_mbps = 240},  \
-    {.queue_id = 3, .vlan_id = 100, .vl_id_start = 4315, .vl_id_count = 8, .rate_mbps = 240}, \
+    {.queue_id = 0, .vlan_id = 97, .vl_id_start = 4291, .vl_id_count = 8, .rate_mbps = 220},  \
+    {.queue_id = 1, .vlan_id = 98, .vl_id_start = 4299, .vl_id_count = 8, .rate_mbps = 220},  \
+    {.queue_id = 2, .vlan_id = 99, .vl_id_start = 4307, .vl_id_count = 8, .rate_mbps = 220},  \
+    {.queue_id = 3, .vlan_id = 100, .vl_id_start = 4315, .vl_id_count = 8, .rate_mbps = 220}, \
 }
 
 // Port 3: VLAN 101-104, VL-ID 4323-4354 (8 per queue, no overlap)
 #define DPDK_EXT_TX_PORT_3_TARGETS {                                                          \
-    {.queue_id = 0, .vlan_id = 101, .vl_id_start = 4323, .vl_id_count = 8, .rate_mbps = 240}, \
-    {.queue_id = 1, .vlan_id = 102, .vl_id_start = 4331, .vl_id_count = 8, .rate_mbps = 240}, \
-    {.queue_id = 2, .vlan_id = 103, .vl_id_start = 4339, .vl_id_count = 8, .rate_mbps = 240}, \
-    {.queue_id = 3, .vlan_id = 104, .vl_id_start = 4347, .vl_id_count = 8, .rate_mbps = 240}, \
+    {.queue_id = 0, .vlan_id = 101, .vl_id_start = 4323, .vl_id_count = 8, .rate_mbps = 220}, \
+    {.queue_id = 1, .vlan_id = 102, .vl_id_start = 4331, .vl_id_count = 8, .rate_mbps = 220}, \
+    {.queue_id = 2, .vlan_id = 103, .vl_id_start = 4339, .vl_id_count = 8, .rate_mbps = 220}, \
+    {.queue_id = 3, .vlan_id = 104, .vl_id_start = 4347, .vl_id_count = 8, .rate_mbps = 220}, \
 }
 
-// Port 0: VLAN 105-108, VL-ID 4355-4386
+// Port 4: VLAN 113-116, VL-ID 4355-4386
 #define DPDK_EXT_TX_PORT_4_TARGETS {                                                          \
-    {.queue_id = 0, .vlan_id = 113, .vl_id_start = 4355, .vl_id_count = 8, .rate_mbps = 240}, \
-    {.queue_id = 1, .vlan_id = 114, .vl_id_start = 4363, .vl_id_count = 8, .rate_mbps = 240}, \
-    {.queue_id = 2, .vlan_id = 115, .vl_id_start = 4371, .vl_id_count = 8, .rate_mbps = 240}, \
-    {.queue_id = 3, .vlan_id = 116, .vl_id_start = 4379, .vl_id_count = 8, .rate_mbps = 240}, \
+    {.queue_id = 0, .vlan_id = 113, .vl_id_start = 4355, .vl_id_count = 8, .rate_mbps = 220}, \
+    {.queue_id = 1, .vlan_id = 114, .vl_id_start = 4363, .vl_id_count = 8, .rate_mbps = 220}, \
+    {.queue_id = 2, .vlan_id = 115, .vl_id_start = 4371, .vl_id_count = 8, .rate_mbps = 220}, \
+    {.queue_id = 3, .vlan_id = 116, .vl_id_start = 4379, .vl_id_count = 8, .rate_mbps = 220}, \
 }
 
 // Port 5: VLAN 117-120, VL-ID 4387-4418 → Port 12
 #define DPDK_EXT_TX_PORT_5_TARGETS {                                                          \
-    {.queue_id = 0, .vlan_id = 117, .vl_id_start = 4387, .vl_id_count = 8, .rate_mbps = 240}, \
-    {.queue_id = 1, .vlan_id = 118, .vl_id_start = 4395, .vl_id_count = 8, .rate_mbps = 240}, \
-    {.queue_id = 2, .vlan_id = 119, .vl_id_start = 4403, .vl_id_count = 8, .rate_mbps = 240}, \
-    {.queue_id = 3, .vlan_id = 120, .vl_id_start = 4411, .vl_id_count = 8, .rate_mbps = 240}, \
+    {.queue_id = 0, .vlan_id = 117, .vl_id_start = 4387, .vl_id_count = 8, .rate_mbps = 220}, \
+    {.queue_id = 1, .vlan_id = 118, .vl_id_start = 4395, .vl_id_count = 8, .rate_mbps = 220}, \
+    {.queue_id = 2, .vlan_id = 119, .vl_id_start = 4403, .vl_id_count = 8, .rate_mbps = 220}, \
+    {.queue_id = 3, .vlan_id = 120, .vl_id_start = 4411, .vl_id_count = 8, .rate_mbps = 220}, \
 }
 
 // ==========================================
@@ -623,13 +623,13 @@ struct dpdk_ext_tx_port_config
 }
 
 // Port 12 RX sources for DPDK external packets (from Port 2,3,4,5)
-// Bu VL-ID aralıklarından gelen paketleri doğrula
+// VL-ID ranges must match what each port's DPDK_EXT_TX actually sends
 #define PORT_12_DPDK_EXT_RX_SOURCE_COUNT 4
 #define PORT_12_DPDK_EXT_RX_SOURCES_INIT {                      \
-    {.source_port = 2, .vl_id_start = 4259, .vl_id_count = 32}, \
-    {.source_port = 3, .vl_id_start = 4227, .vl_id_count = 32}, \
-    {.source_port = 4, .vl_id_start = 4195, .vl_id_count = 32}, \
-    {.source_port = 5, .vl_id_start = 4163, .vl_id_count = 32}, \
+    {.source_port = 2, .vl_id_start = 4291, .vl_id_count = 32}, \
+    {.source_port = 3, .vl_id_start = 4323, .vl_id_count = 32}, \
+    {.source_port = 4, .vl_id_start = 4355, .vl_id_count = 32}, \
+    {.source_port = 5, .vl_id_start = 4387, .vl_id_count = 32}, \
 }
 
 // Port 13 RX sources for DPDK external packets (from Port 0,6)
