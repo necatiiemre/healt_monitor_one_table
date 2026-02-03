@@ -647,11 +647,8 @@ static void *health_monitor_thread_func(void *arg)
         uint64_t cycle_end = get_time_ms();
         uint64_t cycle_time = cycle_end - cycle_start;
 
-        // 4. Store cycle data for main loop to read
-        pthread_spin_lock(&state->stats_lock);
-        memcpy(&state->last_cycle, &cycle, sizeof(cycle));
-        state->last_cycle_valid = true;
-        pthread_spin_unlock(&state->stats_lock);
+        // 4. Print parsed data tables (Assistant + Manager)
+        health_print_tables(&cycle);
 
         // 5. Update statistics
         pthread_spin_lock(&state->stats_lock);
@@ -846,23 +843,4 @@ void print_health_monitor_stats(void)
 bool is_health_monitor_running(void)
 {
     return g_health_monitor.running;
-}
-
-bool get_health_cycle_data(struct health_cycle_data *cycle)
-{
-    struct health_monitor_state *state = &g_health_monitor;
-
-    pthread_spin_lock(&state->stats_lock);
-    if (!state->last_cycle_valid) {
-        pthread_spin_unlock(&state->stats_lock);
-        return false;
-    }
-    memcpy(cycle, &state->last_cycle, sizeof(*cycle));
-    pthread_spin_unlock(&state->stats_lock);
-    return true;
-}
-
-void health_print_tables_ext(const struct health_cycle_data *cycle)
-{
-    health_print_tables(cycle);
 }

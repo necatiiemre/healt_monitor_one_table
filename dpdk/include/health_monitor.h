@@ -59,10 +59,6 @@ struct health_monitor_state {
     // Statistics
     struct health_monitor_stats stats;
     pthread_spinlock_t stats_lock;
-
-    // Last cycle data (updated by thread, read by main loop)
-    struct health_cycle_data last_cycle;
-    bool last_cycle_valid;
 };
 
 // ==========================================
@@ -108,18 +104,5 @@ void print_health_monitor_stats(void);
  * @return true if running
  */
 bool is_health_monitor_running(void);
-
-/**
- * @brief Get a thread-safe copy of the last health cycle data
- * @param cycle Output cycle data structure
- * @return true if valid data available, false if no cycle completed yet
- */
-bool get_health_cycle_data(struct health_cycle_data *cycle);
-
-/**
- * @brief Print health monitor tables (Assistant + Manager FPGA + MCU)
- * @param cycle Pointer to cycle data to print
- */
-void health_print_tables_ext(const struct health_cycle_data *cycle);
 
 #endif // HEALTH_MONITOR_H
