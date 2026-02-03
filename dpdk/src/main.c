@@ -589,11 +589,23 @@ int main(int argc, char const *argv[])
         }
 #endif
 
+        // Print PTP and Health Monitor stats every 10 seconds (normal mode)
+        if (loop_count % 10 == 0) {
 #if PTP_ENABLED
-        // Print PTP stats every second
-        if (ptp_active)
-            ptp_print_stats();
+            if (ptp_active)
+                ptp_print_stats();
 #endif
+
+#if HEALTH_MONITOR_ENABLED
+            if (health_active) {
+                struct health_cycle_data hc;
+                if (get_health_cycle_data(&hc)) {
+                    health_print_tables_ext(&hc);
+                }
+                print_health_monitor_stats();
+            }
+#endif
+        }
 
         fflush(stdout);  // Ensure output is visible on remote/main computer
 
