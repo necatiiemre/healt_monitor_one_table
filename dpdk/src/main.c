@@ -438,15 +438,27 @@ int main(int argc, char const *argv[])
         }
     }
 
+    // Runtime flags for ATE mode — used in both init and shutdown sections
+    bool health_active = false;
+    bool ptp_active = false;
+
     // Initialize and start Health Monitor (runs on Port 13, independent from PRBS)
+    // Disabled in ATE mode via ATE_HEALTH_MONITOR_ENABLED flag
 #if HEALTH_MONITOR_ENABLED
-    printf("\n=== Initializing Health Monitor ===\n");
-    if (init_health_monitor() == 0) {
-        if (start_health_monitor(&force_quit) != 0) {
-            printf("Warning: Failed to start health monitor\n");
+    {
+        health_active = ate_mode_enabled() ? ATE_HEALTH_MONITOR_ENABLED : HEALTH_MONITOR_ENABLED;
+        if (health_active) {
+            printf("\n=== Initializing Health Monitor ===\n");
+            if (init_health_monitor() == 0) {
+                if (start_health_monitor(&force_quit) != 0) {
+                    printf("Warning: Failed to start health monitor\n");
+                }
+            } else {
+                printf("Warning: Failed to initialize health monitor\n");
+            }
+        } else {
+            printf("\n[ATE] Health Monitor disabled (ATE_HEALTH_MONITOR_ENABLED=0)\n");
         }
-    } else {
-        printf("Warning: Failed to initialize health monitor\n");
     }
 #endif
 
@@ -469,44 +481,52 @@ int main(int argc, char const *argv[])
 
 #if PTP_ENABLED
     // *** PTP SLAVE INITIALIZATION AND START ***
-    printf("\n=== Initializing PTP Slave (IEEE 1588v2) ===\n");
-    printf("Mode: One-step | Transport: Layer 2 | Timestamps: Software (rte_rdtsc)\n");
-    printf("Architecture: Split TX/RX Port Support\n\n");
+    // Disabled in ATE mode via ATE_PTP_ENABLED flag
+    {
+        ptp_active = ate_mode_enabled() ? ATE_PTP_ENABLED : PTP_ENABLED;
+        if (ptp_active) {
+            printf("\n=== Initializing PTP Slave (IEEE 1588v2) ===\n");
+            printf("Mode: One-step | Transport: Layer 2 | Timestamps: Software (rte_rdtsc)\n");
+            printf("Architecture: Split TX/RX Port Support\n\n");
 
-    // Initialize PTP subsystem
-    if (ptp_init() != 0) {
-        printf("Warning: PTP initialization failed\n");
-    } else {
-        // Configure PTP sessions with split TX/RX port support
-        // Sessions are defined in config.h with separate RX and TX ports
-        static struct ptp_session_config ptp_sessions[] = PTP_SESSIONS_CONFIG_INIT;
+            // Initialize PTP subsystem
+            if (ptp_init() != 0) {
+                printf("Warning: PTP initialization failed\n");
+            } else {
+                // Configure PTP sessions with split TX/RX port support
+                // Sessions are defined in config.h with separate RX and TX ports
+                static struct ptp_session_config ptp_sessions[] = PTP_SESSIONS_CONFIG_INIT;
 
-        if (ptp_configure_split_sessions(ptp_sessions, PTP_SESSION_COUNT) != 0) {
-            printf("Warning: Failed to configure PTP sessions\n");
-        } else {
-            // Assign PTP cores to RX ports (where sessions live)
-            // Each unique RX port needs a dedicated lcore
-            for (uint16_t i = 0; i < PTP_SESSION_COUNT; i++) {
-                uint16_t rx_port_id = ptp_sessions[i].rx_port_id;
+                if (ptp_configure_split_sessions(ptp_sessions, PTP_SESSION_COUNT) != 0) {
+                    printf("Warning: Failed to configure PTP sessions\n");
+                } else {
+                    // Assign PTP cores to RX ports (where sessions live)
+                    // Each unique RX port needs a dedicated lcore
+                    for (uint16_t i = 0; i < PTP_SESSION_COUNT; i++) {
+                        uint16_t rx_port_id = ptp_sessions[i].rx_port_id;
 
-                // Find this port in ports_config and assign lcore
-                for (uint16_t j = 0; j < (uint16_t)nb_ports; j++) {
-                    if (ports_config.ports[j].port_id == rx_port_id &&
-                        ports_config.ports[j].used_ptp_core != 0) {
-                        ptp_assign_lcore(rx_port_id, ports_config.ports[j].used_ptp_core);
-                        break;
+                        // Find this port in ports_config and assign lcore
+                        for (uint16_t j = 0; j < (uint16_t)nb_ports; j++) {
+                            if (ports_config.ports[j].port_id == rx_port_id &&
+                                ports_config.ports[j].used_ptp_core != 0) {
+                                ptp_assign_lcore(rx_port_id, ports_config.ports[j].used_ptp_core);
+                                break;
+                            }
+                        }
+                    }
+
+                    // Start PTP workers
+                    printf("\n=== Starting PTP Workers ===\n");
+                    if (ptp_start() != 0) {
+                        printf("Warning: Failed to start PTP workers\n");
+                    } else {
+                        printf("PTP workers started (%d sessions with split TX/RX ports)\n",
+                               PTP_SESSION_COUNT);
                     }
                 }
             }
-
-            // Start PTP workers
-            printf("\n=== Starting PTP Workers ===\n");
-            if (ptp_start() != 0) {
-                printf("Warning: Failed to start PTP workers\n");
-            } else {
-                printf("PTP workers started (%d sessions with split TX/RX ports)\n",
-                       PTP_SESSION_COUNT);
-            }
+        } else {
+            printf("\n[ATE] PTP disabled (ATE_PTP_ENABLED=0)\n");
         }
     }
 #endif
@@ -571,7 +591,8 @@ int main(int argc, char const *argv[])
 
 #if PTP_ENABLED
         // Print PTP stats every second
-        ptp_print_stats();
+        if (ptp_active)
+            ptp_print_stats();
 #endif
 
         fflush(stdout);  // Ensure output is visible on remote/main computer
@@ -593,15 +614,17 @@ int main(int argc, char const *argv[])
     printf("\n=== Shutting down ===\n");
 
 #if PTP_ENABLED
-    // Stop PTP workers first
-    printf("Stopping PTP workers...\n");
-    ptp_print_stats();  // Final stats
-    ptp_stop();
+    if (ptp_active) {
+        // Stop PTP workers first
+        printf("Stopping PTP workers...\n");
+        ptp_print_stats();  // Final stats
+        ptp_stop();
+    }
 #endif
 
 #if HEALTH_MONITOR_ENABLED
     // Stop health monitor
-    if (is_health_monitor_running()) {
+    if (health_active && is_health_monitor_running()) {
         printf("Stopping health monitor...\n");
         print_health_monitor_stats();  // Final stats
         stop_health_monitor();
@@ -626,11 +649,13 @@ int main(int argc, char const *argv[])
 
     // Cleanup
 #if PTP_ENABLED
-    ptp_cleanup();
+    if (ptp_active)
+        ptp_cleanup();
 #endif
 
 #if HEALTH_MONITOR_ENABLED
-    cleanup_health_monitor();
+    if (health_active)
+        cleanup_health_monitor();
 #endif
 
 #if ENABLE_RAW_SOCKET_PORTS

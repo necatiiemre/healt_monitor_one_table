@@ -659,6 +659,10 @@ struct dpdk_ext_tx_port_config
 #define PTP_ENABLED 1
 #endif
 
+#ifndef ATE_PTP_ENABLED
+#define ATE_PTP_ENABLED 0
+#endif
+
 // PTP Queue configuration
 // Using Queue 5 for both TX and RX (Queue 4 is used by External TX)
 #define PTP_TX_QUEUE 5
@@ -788,6 +792,10 @@ struct ptp_session_config
 
 #ifndef HEALTH_MONITOR_ENABLED
 #define HEALTH_MONITOR_ENABLED 1
+#endif
+
+#ifndef ATE_HEALTH_MONITOR_ENABLED
+#define ATE_HEALTH_MONITOR_ENABLED 0
 #endif
 
 #endif /* CONFIG_H */
