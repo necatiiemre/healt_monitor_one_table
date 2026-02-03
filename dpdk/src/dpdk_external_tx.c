@@ -276,23 +276,22 @@ int dpdk_ext_tx_worker(void *arg)
 #endif
 
     // ==========================================
-    // PURE TIMESTAMP-BASED PACING (1 saniyeye yayılmış smooth trafik)
+    // BYTE-BASED TIMESTAMP PACING (sabit byte rate)
     // ==========================================
     //
-    // Hedef: 200 Mbit/s = 25 MB/s = ~16,480 paket/s
-    // Her paket arası = 1,000,000 µs / 16,480 ≈ 60.7 µs
-    //
-    // Bu sayede trafik 1 saniyeye eşit olarak yayılır, burst OLMAZ.
+    // Her paket boyutuna göre dinamik delay hesaplanır:
+    //   delay = pkt_size * tsc_hz / bytes_per_sec
+    // Küçük paket → kısa delay, büyük paket → uzun delay
+    // Böylece byte rate sabit kalır, IMIX ile anlık aşım olmaz.
     // ==========================================
     uint64_t tsc_hz = rte_get_tsc_hz();
 
-    // Hassas hesaplama: rate_mbps -> bytes/sec -> packets/sec -> cycles/packet
-    // IMIX: Ortalama paket boyutu kullan
+    // bytes_per_sec: rate limiting için temel parametre
     uint64_t bytes_per_sec = (uint64_t)params->rate_mbps * 125000ULL;  // Mbit/s -> bytes/s
     uint64_t packets_per_sec = bytes_per_sec / avg_pkt_size;
     uint64_t delay_cycles = (packets_per_sec > 0) ? (tsc_hz / packets_per_sec) : tsc_hz;
 
-    // Mikrosaniye cinsinden paket arası süre (debug için)
+    // Mikrosaniye cinsinden ortalama paket arası süre (debug için)
     double inter_packet_us = (double)delay_cycles * 1000000.0 / (double)tsc_hz;
 
     // Stagger: Her port farklı zamanda başlar (switch buffer koruma)
@@ -325,9 +324,20 @@ int dpdk_ext_tx_worker(void *arg)
     while (!(*params->stop_flag))
     {
         // ==========================================
-        // SMOOTH PACING: Her paket tam zamanında gönderilir
-        // Burst YOK - trafik 1 saniyeye eşit yayılır
+        // BYTE-BASED PACING: Delay paket boyutuna göre dinamik
+        // Küçük paket → kısa delay, büyük paket → uzun delay
         // ==========================================
+
+        // Determine next packet size FIRST (for dynamic delay calculation)
+#if IMIX_ENABLED
+        uint16_t pkt_size = get_imix_packet_size(imix_counter, imix_offset);
+#else
+        const uint16_t pkt_size = PACKET_SIZE_VLAN;
+#endif
+        // Calculate byte-based delay for THIS packet
+        uint64_t dynamic_delay = (bytes_per_sec > 0) ?
+            ((uint64_t)pkt_size * tsc_hz / bytes_per_sec) : delay_cycles;
+
         uint64_t now = rte_get_tsc_cycles();
 
         // Zamanı gelene kadar bekle (busy-wait for precision)
@@ -338,11 +348,11 @@ int dpdk_ext_tx_worker(void *arg)
 
         // ÖNEMLİ: Geride kalırsak CATCH-UP YAPMA (burst önleme)
         // Sadece bir sonraki slot'a geç, kayıp paketleri telafi etme
-        if (next_send_time + delay_cycles < now) {
+        if (next_send_time + dynamic_delay < now) {
             // Çok geride kaldık, şimdiden başla (paket kaybı kabul)
             next_send_time = now;
         }
-        next_send_time += delay_cycles;
+        next_send_time += dynamic_delay;
 
         // Paket tahsisi - BAŞARISIZ OLURSA BİLE TIMING KORUNUR
         pkts[0] = rte_pktmbuf_alloc(params->mbuf_pool);
@@ -395,13 +405,11 @@ int dpdk_ext_tx_worker(void *arg)
         *(uint16_t *)(vlan_tag + 2) = rte_cpu_to_be_16(0x0800); // IPv4
 
 #if IMIX_ENABLED
-        // IMIX: Paket boyutunu pattern'den al
-        uint16_t pkt_size = get_imix_packet_size(imix_counter, imix_offset);
+        // IMIX: pkt_size already determined at top of loop for pacing
         uint16_t prbs_len = calc_prbs_size(pkt_size);
         uint16_t payload_size = pkt_size - l2_len - sizeof(struct rte_ipv4_hdr) - sizeof(struct rte_udp_hdr);
         imix_counter++;
 #else
-        const uint16_t pkt_size = PACKET_SIZE_VLAN;
         const uint16_t prbs_len = NUM_PRBS_BYTES;
         const uint16_t payload_size = PAYLOAD_SIZE_VLAN;
 #endif

@@ -104,8 +104,9 @@ struct raw_rate_limiter {
     uint64_t last_update_ns;
 
     // Smooth pacing fields (timestamp-based like DPDK)
-    uint64_t delay_ns;           // Inter-packet delay in nanoseconds
+    uint64_t delay_ns;           // Inter-packet delay in nanoseconds (fixed-size fallback)
     uint64_t next_send_time_ns;  // Next packet send time
+    uint64_t bytes_per_sec;      // Target byte rate (for dynamic per-packet delay)
     bool smooth_pacing_enabled;  // Use smooth pacing instead of token bucket
 };
 
@@ -301,7 +302,7 @@ void init_raw_rate_limiter(struct raw_rate_limiter *limiter, uint32_t rate_mbps)
 void init_raw_rate_limiter_smooth(struct raw_rate_limiter *limiter, uint32_t rate_mbps,
                                    uint16_t target_id, uint16_t total_targets);
 bool raw_consume_tokens(struct raw_rate_limiter *limiter, uint64_t bytes);
-bool raw_check_smooth_pacing(struct raw_rate_limiter *limiter);
+bool raw_check_smooth_pacing(struct raw_rate_limiter *limiter, uint16_t pkt_size);
 
 // ==========================================
 // STATISTICS & UTILITY FUNCTIONS
