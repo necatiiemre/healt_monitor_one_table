@@ -117,12 +117,14 @@ static void parse_device_header(const uint8_t *udp_payload, struct health_device
     dev->auto_mac_update    = udp_payload[DEV_OFF_AUTO_MAC_UPDATE];
     dev->upstream_mode      = udp_payload[DEV_OFF_UPSTREAM_MODE];
 
-    // SW IP core version (last 3 bytes of 6-byte field)
+    // SW IP core version (last 3 bytes of 6-byte field, big-endian)
+    // Bit layout: [23:16]=major, [15:8]=minor, [7:0]=bugfix
     dev->sw_ip_major = udp_payload[DEV_OFF_SW_IP_CORE_VER + 3];
     dev->sw_ip_minor = udp_payload[DEV_OFF_SW_IP_CORE_VER + 4];
     dev->sw_ip_patch = udp_payload[DEV_OFF_SW_IP_CORE_VER + 5];
 
-    // ES IP core version (last 3 bytes of 6-byte field)
+    // ES IP core version (last 3 bytes of 6-byte field, big-endian)
+    // Bit layout: [23:16]=major, [15:8]=minor, [7:0]=bugfix
     dev->es_ip_major = udp_payload[DEV_OFF_ES_IP_CORE_VER + 3];
     dev->es_ip_minor = udp_payload[DEV_OFF_ES_IP_CORE_VER + 4];
     dev->es_ip_patch = udp_payload[DEV_OFF_ES_IP_CORE_VER + 5];
@@ -262,37 +264,23 @@ static void health_parse_response(const uint8_t *packet, size_t len, struct heal
         return;
     }
 
-    // Determine which FPGA this packet belongs to based on packet order:
-    //   Packet 1 (1187) + Packet 2 (1083) -> Assistant FPGA
-    //   Packet 3 (1187) + Packet 4 (1083) + Packet 5 (438) -> Manager FPGA
-    //
-    // Assistant receives: 1x 1187 + 1x 1083 = 2 packets
-    // Manager receives:   1x 1187 + 1x 1083 + 1x 438 = 3 packets
-    //
-    // Logic: First 1187 goes to assistant, second 1187 goes to manager.
-    //        First 1083 goes to assistant, second 1083 goes to manager.
-    //        438 always goes to manager.
+    // Determine which FPGA this packet belongs to using status_enable field
+    // (byte 6 of UDP payload, present in both full device header and mini header):
+    //   status_enable = 0x03 -> Assistant FPGA (16 ports: 0-15)
+    //   status_enable = 0x01 -> Manager FPGA  (19 ports: 16-34)
+    //   status_enable = 0x05 -> MCU (handled above by packet size)
 
+    uint8_t status_enable = udp_payload[DEV_OFF_STATUS_ENABLE];
     struct health_fpga_data *target_fpga = NULL;
 
-    if (len == HEALTH_PKT_SIZE_3_PORTS) {
-        // 438 byte packet always belongs to Manager
+    if (status_enable == STATUS_ENABLE_ASSISTANT) {
+        target_fpga = &cycle->assistant;
+    } else if (status_enable == STATUS_ENABLE_MANAGER) {
         target_fpga = &cycle->manager;
-    } else if (has_device_header) {
-        // 1187 byte packet: first goes to assistant, second to manager
-        if (!cycle->assistant.device_info_valid) {
-            target_fpga = &cycle->assistant;
-        } else {
-            target_fpga = &cycle->manager;
-        }
     } else {
-        // 1083 byte packet: first goes to assistant, second to manager
-        if (cycle->assistant.packets_received < ASSISTANT_EXPECTED_PACKETS &&
-            cycle->assistant.device_info_valid) {
-            target_fpga = &cycle->assistant;
-        } else {
-            target_fpga = &cycle->manager;
-        }
+        printf("[HEALTH] Unknown status_enable=0x%02X in %zu-byte packet, ignoring\n",
+               status_enable, len);
+        return;
     }
 
     // Parse device header if present

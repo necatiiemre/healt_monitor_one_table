@@ -45,11 +45,16 @@ typedef enum {
     FPGA_TYPE_COUNT     = 2
 } fpga_type_t;
 
-// Assistant FPGA: 2 packets (1187 + 1083) = 8 + 8 = 16 ports
+// Status enable values for device identification (byte 6 of UDP payload)
+#define STATUS_ENABLE_MANAGER    0x01  // Manager FPGA (ports 16-34)
+#define STATUS_ENABLE_ASSISTANT  0x03  // Assistant FPGA (ports 0-15)
+#define STATUS_ENABLE_MCU        0x05  // MCU
+
+// Assistant FPGA: 2 packets (1187 + 1083) = 8 + 8 = 16 ports (ports 0-15)
 #define ASSISTANT_EXPECTED_PACKETS   2
 #define ASSISTANT_MAX_PORTS          16
 
-// Manager FPGA: 3 packets (1187 + 1083 + 438) = 8 + 8 + 3 = 19 ports
+// Manager FPGA: 3 packets (1187 + 1083 + 438) = 8 + 8 + 3 = 19 ports (ports 16-34)
 #define MANAGER_EXPECTED_PACKETS     3
 #define MANAGER_MAX_PORTS            19
 
