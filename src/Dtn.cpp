@@ -362,11 +362,12 @@ bool Dtn::configureSequence()
         if (!g_dpdk_monitoring_running) break;
 
         // Fetch latest complete stats table from DPDK log
-        // Get content from the last "==========" separator to end of file
-        // This ensures we get a complete table, not a partial one
+        // Get content from the last "========== [" separator to end of file
+        // Pattern "========== [" matches only the main stats header (e.g. "========== [TEST 123 sn] ==========")
+        // and avoids matching health monitor separators ("[HEALTH] ====...")
         std::string output;
         g_ssh_deployer_server.execute(
-            "grep -n '==========' /tmp/dpdk_app.log | tail -1 | cut -d: -f1 | "
+            "grep -n '========== \\[' /tmp/dpdk_app.log | tail -1 | cut -d: -f1 | "
             "xargs -I{} tail -n +{} /tmp/dpdk_app.log",
             &output, false);
 
