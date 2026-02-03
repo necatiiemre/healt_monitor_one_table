@@ -264,23 +264,39 @@ static void health_parse_response(const uint8_t *packet, size_t len, struct heal
         return;
     }
 
-    // Determine which FPGA this packet belongs to using status_enable field
-    // (byte 6 of UDP payload, present in both full device header and mini header):
-    //   status_enable = 0x03 -> Assistant FPGA (16 ports: 0-15)
-    //   status_enable = 0x01 -> Manager FPGA  (19 ports: 16-34)
-    //   status_enable = 0x05 -> MCU (handled above by packet size)
+    // Determine which FPGA this packet belongs to:
+    //   1187-byte packets have full device header with valid status_enable at byte 6:
+    //     status_enable = 0x03 -> Assistant FPGA (16 ports: 0-15)
+    //     status_enable = 0x01 -> Manager FPGA  (19 ports: 16-34)
+    //   1083/438-byte packets have mini header where byte 6 is reserved (always 0x00).
+    //   For mini header packets, use the last FPGA identified from a 1187-byte packet.
 
-    uint8_t status_enable = udp_payload[DEV_OFF_STATUS_ENABLE];
     struct health_fpga_data *target_fpga = NULL;
 
-    if (status_enable == STATUS_ENABLE_ASSISTANT) {
-        target_fpga = &cycle->assistant;
-    } else if (status_enable == STATUS_ENABLE_MANAGER) {
-        target_fpga = &cycle->manager;
+    if (has_device_header) {
+        // 1187-byte packet: identify FPGA from status_enable field
+        uint8_t status_enable = udp_payload[DEV_OFF_STATUS_ENABLE];
+        if (status_enable == STATUS_ENABLE_ASSISTANT) {
+            target_fpga = &cycle->assistant;
+            cycle->last_fpga_type = STATUS_ENABLE_ASSISTANT;
+        } else if (status_enable == STATUS_ENABLE_MANAGER) {
+            target_fpga = &cycle->manager;
+            cycle->last_fpga_type = STATUS_ENABLE_MANAGER;
+        } else {
+            printf("[HEALTH] Unknown status_enable=0x%02X in %zu-byte packet, ignoring\n",
+                   status_enable, len);
+            return;
+        }
     } else {
-        printf("[HEALTH] Unknown status_enable=0x%02X in %zu-byte packet, ignoring\n",
-               status_enable, len);
-        return;
+        // 1083/438-byte packet (mini header): use last identified FPGA
+        if (cycle->last_fpga_type == STATUS_ENABLE_ASSISTANT) {
+            target_fpga = &cycle->assistant;
+        } else if (cycle->last_fpga_type == STATUS_ENABLE_MANAGER) {
+            target_fpga = &cycle->manager;
+        } else {
+            printf("[HEALTH] Mini header packet (%zu bytes) received before any 1187-byte packet, ignoring\n", len);
+            return;
+        }
     }
 
     // Parse device header if present

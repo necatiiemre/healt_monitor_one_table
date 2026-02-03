@@ -314,6 +314,8 @@ struct health_cycle_data {
     struct health_fpga_data  manager;               // Manager FPGA data
     struct health_mcu_info   mcu;                   // MCU data
     uint8_t  total_responses_received;              // Total responses this cycle
+    uint8_t  last_fpga_type;                        // Last identified FPGA from 1187-byte packet
+                                                    // 0=none, STATUS_ENABLE_ASSISTANT or STATUS_ENABLE_MANAGER
 };
 
 #endif // HEALTH_TYPES_H
