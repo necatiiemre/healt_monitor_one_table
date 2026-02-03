@@ -243,15 +243,15 @@ void init_raw_rate_limiter_smooth(struct raw_rate_limiter *limiter, uint32_t rat
 
     // Calculate smooth pacing parameters
     // bytes_per_sec = rate_mbps * 1000000 / 8
-    limiter->bytes_per_sec = (uint64_t)rate_mbps * 125000ULL;
+    uint64_t bytes_per_sec = (uint64_t)rate_mbps * 125000ULL;
 #if IMIX_ENABLED
-    uint64_t packets_per_sec = limiter->bytes_per_sec / RAW_IMIX_AVG_PACKET_SIZE;
+    uint64_t packets_per_sec = bytes_per_sec / RAW_IMIX_AVG_PACKET_SIZE;
 #else
-    uint64_t packets_per_sec = limiter->bytes_per_sec / RAW_PKT_TOTAL_SIZE;
+    uint64_t packets_per_sec = bytes_per_sec / RAW_PKT_TOTAL_SIZE;
 #endif
 
     if (packets_per_sec > 0) {
-        // delay_ns based on average (used as fallback for non-IMIX)
+        // delay_ns = 1 second in ns / packets_per_sec
         limiter->delay_ns = 1000000000ULL / packets_per_sec;
     } else {
         limiter->delay_ns = 1000000000ULL;  // 1 second if rate is 0
@@ -272,10 +272,8 @@ void init_raw_rate_limiter_smooth(struct raw_rate_limiter *limiter, uint32_t rat
            packets_per_sec, stagger_offset / 1000000);
 }
 
-// Check if it's time to send next packet (byte-based smooth pacing)
-// pkt_size: actual packet size in bytes — delay is proportional to packet size
-// Small packets get shorter delay, large packets get longer delay → constant byte rate
-bool raw_check_smooth_pacing(struct raw_rate_limiter *limiter, uint16_t pkt_size)
+// Check if it's time to send next packet (smooth pacing)
+bool raw_check_smooth_pacing(struct raw_rate_limiter *limiter)
 {
     if (!limiter->smooth_pacing_enabled) {
         return raw_consume_tokens(limiter, RAW_PKT_TOTAL_SIZE);
@@ -293,14 +291,8 @@ bool raw_check_smooth_pacing(struct raw_rate_limiter *limiter, uint16_t pkt_size
         limiter->next_send_time_ns = now;
     }
 
-    // Byte-based dynamic delay: delay = pkt_size * 1e9 / bytes_per_sec
-    // This keeps the BYTE RATE constant regardless of packet size
-    if (limiter->bytes_per_sec > 0) {
-        uint64_t dynamic_delay_ns = (uint64_t)pkt_size * 1000000000ULL / limiter->bytes_per_sec;
-        limiter->next_send_time_ns += dynamic_delay_ns;
-    } else {
-        limiter->next_send_time_ns += limiter->delay_ns;
-    }
+    // Schedule next packet
+    limiter->next_send_time_ns += limiter->delay_ns;
 
     return true;
 }
@@ -1068,10 +1060,6 @@ void *raw_tx_worker(void *arg)
     uint64_t local_tx_errors[MAX_RAW_TARGETS] = {0};
     uint64_t total_local_pkts = 0;
 
-    // TX drop monitoring via kernel PACKET_STATISTICS
-    uint64_t prev_kernel_tx_drops = 0;
-    uint64_t total_kernel_tx_drops = 0;
-
     while (!port->stop_flag && (g_stop_flag == NULL || !*g_stop_flag)) {
         bool any_sent = false;
 
@@ -1081,18 +1069,8 @@ void *raw_tx_worker(void *arg)
             uint32_t sent_this_target = 0;
 
             // Send all packets that are due (catch-up), limited to MAX_CATCHUP_PER_TARGET
-            // Byte-based pacing: determine packet size FIRST, then check timing
-            while (sent_this_target < MAX_CATCHUP_PER_TARGET) {
-                // Determine next packet size for pacing calculation
-#if IMIX_ENABLED
-                uint16_t pkt_size = get_raw_imix_packet_size(imix_counter, imix_offset);
-#else
-                uint16_t pkt_size = RAW_PKT_TOTAL_SIZE;
-#endif
-                // Check pacing with actual packet size (byte-based delay)
-                if (!raw_check_smooth_pacing(&target->limiter, pkt_size))
-                    break;
-
+            while (raw_check_smooth_pacing(&target->limiter) &&
+                   sent_this_target < MAX_CATCHUP_PER_TARGET) {
                 // Get current VL-ID
                 uint16_t vl_id = target->config.vl_id_start + target->current_vl_offset;
                 uint16_t vl_index = target->current_vl_offset;
@@ -1101,6 +1079,8 @@ void *raw_tx_worker(void *arg)
                 uint64_t seq = target->vl_sequences[vl_index].tx_sequence;
 
 #if IMIX_ENABLED
+                // IMIX: Paket boyutunu pattern'den al
+                uint16_t pkt_size = get_raw_imix_packet_size(imix_counter, imix_offset);
                 uint16_t prbs_len = calc_raw_prbs_size(pkt_size);
                 imix_counter++;
 
@@ -1118,6 +1098,7 @@ void *raw_tx_worker(void *arg)
 
                 // Build packet
                 build_raw_packet(packet_buffer, port->mac_addr, vl_id, seq, prbs_data);
+                uint16_t pkt_size = RAW_PKT_TOTAL_SIZE;
 #endif
 
                 // Get TX frame from ring
@@ -1204,21 +1185,6 @@ void *raw_tx_worker(void *arg)
                 }
             }
             total_local_pkts = 0;
-
-            // Check kernel TX drops via PACKET_STATISTICS
-            struct tpacket_stats kstats;
-            socklen_t slen = sizeof(kstats);
-            if (getsockopt(port->tx_socket, SOL_PACKET, PACKET_STATISTICS,
-                           &kstats, &slen) == 0) {
-                if (kstats.tp_drops > 0) {
-                    total_kernel_tx_drops += kstats.tp_drops;
-                    if (total_kernel_tx_drops != prev_kernel_tx_drops) {
-                        printf("[Port %u TX] KERNEL TX DROPS: +%u (total=%lu)\n",
-                               port->port_id, kstats.tp_drops, total_kernel_tx_drops);
-                        prev_kernel_tx_drops = total_kernel_tx_drops;
-                    }
-                }
-            }
         }
 
         if (!any_sent) {
