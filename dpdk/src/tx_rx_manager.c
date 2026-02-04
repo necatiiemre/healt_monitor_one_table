@@ -869,8 +869,13 @@ int tx_worker(void *arg)
 
     // PORT-AWARE: Her port için config'deki tx_vl_ids değerlerini kullan
     const uint16_t vl_start = get_tx_vl_id_range_start(params->port_id, params->queue_id);
+#if TOKEN_BUCKET_TX_ENABLED
+    const uint16_t vl_range_size = GET_TB_VL_RANGE_SIZE(params->port_id);
+    const uint16_t vl_end = vl_start + vl_range_size;
+#else
     const uint16_t vl_end = get_tx_vl_id_range_end(params->port_id, params->queue_id);
     const uint16_t vl_range_size = get_vl_id_range_size(); // Her zaman 128
+#endif
 
 #if IMIX_ENABLED
     // IMIX: Worker-specific offset for pattern rotation (hybrid shuffle)
@@ -879,10 +884,16 @@ int tx_worker(void *arg)
 #endif
 
     // ==========================================
-    // SMOOTH PACING SETUP (1 saniyeye yayılmış trafik)
+    // PACING SETUP
     // ==========================================
     uint64_t tsc_hz = rte_get_tsc_hz();
 
+#if TOKEN_BUCKET_TX_ENABLED
+    // TOKEN BUCKET: Her VL-IDX 1ms'de 1 paket
+    // Rate = vl_range_size × 1000 pkt/s
+    uint64_t packets_per_sec = (uint64_t)vl_range_size * 1000;
+    uint64_t delay_cycles = tsc_hz / packets_per_sec;
+#else
     // Rate hesaplama: limiter.tokens_per_sec zaten bytes/sec
     // IMIX: Ortalama paket boyutu kullanarak packets_per_sec hesapla
 #if IMIX_ENABLED
@@ -892,6 +903,7 @@ int tx_worker(void *arg)
 #endif
     uint64_t packets_per_sec = params->limiter.tokens_per_sec / avg_bytes_per_packet;
     uint64_t delay_cycles = (packets_per_sec > 0) ? (tsc_hz / packets_per_sec) : tsc_hz;
+#endif
 
     // Mikrosaniye cinsinden paket arası süre
     double inter_packet_us = (double)delay_cycles * 1000000.0 / (double)tsc_hz;
@@ -903,7 +915,9 @@ int tx_worker(void *arg)
 
     printf("TX Worker started: Port %u, Queue %u, Lcore %u, VLAN %u, VL_RANGE [%u..%u)\n",
            params->port_id, params->queue_id, params->lcore_id, params->vlan_id, vl_start, vl_end);
-#if IMIX_ENABLED
+#if TOKEN_BUCKET_TX_ENABLED
+    printf("  *** TOKEN BUCKET MODE - %u VL-IDX, 1ms window ***\n", vl_range_size);
+#elif IMIX_ENABLED
     printf("  *** IMIX MODE ENABLED - Variable packet sizes ***\n");
     printf("  -> IMIX pattern: 100, 200, 400, 800, 1200x3, 1518x3 (avg=%lu bytes)\n", avg_bytes_per_packet);
     printf("  -> Worker offset: %u (hybrid shuffle)\n", imix_offset);

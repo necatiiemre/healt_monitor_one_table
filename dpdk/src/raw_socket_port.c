@@ -905,6 +905,16 @@ int init_raw_socket_port(int raw_index, const struct raw_socket_port_config *con
         init_raw_rate_limiter_smooth(&target->limiter, target->config.rate_mbps,
                                       t, config->tx_target_count);
 
+#if TOKEN_BUCKET_TX_ENABLED
+        // TOKEN BUCKET: Override delay_ns based on VL count (1 pkt per VL per 1ms)
+        // delay_ns = 1ms / vl_id_count (per target)
+        if (target->config.vl_id_count > 0) {
+            target->limiter.delay_ns = 1000000ULL / target->config.vl_id_count;
+            printf("[Token Bucket] Port %u Target %d: delay_ns=%lu (VL count=%u)\n",
+                   config->port_id, t, target->limiter.delay_ns, target->config.vl_id_count);
+        }
+#endif
+
         // Allocate VL-ID sequence trackers
         target->vl_sequences = calloc(target->config.vl_id_count, sizeof(struct raw_vl_sequence));
         if (!target->vl_sequences) {
@@ -1029,6 +1039,12 @@ void *raw_tx_worker(void *arg)
     // IMIX: Worker offset (her target için farklı pattern başlangıcı)
     uint8_t imix_offset = (uint8_t)(port->port_id % IMIX_PATTERN_SIZE);
     uint64_t imix_counter = 0;
+#endif
+
+#if TOKEN_BUCKET_TX_ENABLED
+    printf("[Port %u TX Worker] Started with %u targets (TOKEN BUCKET MODE)\n",
+           port->port_id, port->tx_target_count);
+#elif IMIX_ENABLED
     printf("[Port %u TX Worker] Started with %u targets (IMIX MODE + SMOOTH PACING)\n",
            port->port_id, port->tx_target_count);
     printf("[Port %u TX] IMIX pattern: 96, 196, 396, 796, 1196x3, 1514x3 (avg=%d bytes)\n",
@@ -1072,8 +1088,25 @@ void *raw_tx_worker(void *arg)
             while (raw_check_smooth_pacing(&target->limiter) &&
                    sent_this_target < MAX_CATCHUP_PER_TARGET) {
                 // Get current VL-ID
-                uint16_t vl_id = target->config.vl_id_start + target->current_vl_offset;
                 uint16_t vl_index = target->current_vl_offset;
+#if TOKEN_BUCKET_TX_ENABLED
+                // Token bucket: Non-contiguous VL-ID ranges
+                // Port 12: 4'lü bloklar, 8 step (block_size=4, step=8)
+                // Port 13: tekil VL, 4 step (block_size=1, step=4)
+                uint16_t tb_block_size, tb_block_step;
+                if (port->port_id == 12) {
+                    tb_block_size = TB_PORT_12_VL_BLOCK_SIZE;
+                    tb_block_step = TB_PORT_12_VL_BLOCK_STEP;
+                } else {
+                    tb_block_size = TB_PORT_13_VL_BLOCK_SIZE;
+                    tb_block_step = TB_PORT_13_VL_BLOCK_STEP;
+                }
+                uint16_t block = vl_index / tb_block_size;
+                uint16_t offset_in_block = vl_index % tb_block_size;
+                uint16_t vl_id = target->config.vl_id_start + block * tb_block_step + offset_in_block;
+#else
+                uint16_t vl_id = target->config.vl_id_start + target->current_vl_offset;
+#endif
 
                 // Peek sequence WITHOUT incrementing — commit after frame is placed in ring
                 uint64_t seq = target->vl_sequences[vl_index].tx_sequence;

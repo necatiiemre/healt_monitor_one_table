@@ -276,21 +276,25 @@ int dpdk_ext_tx_worker(void *arg)
 #endif
 
     // ==========================================
-    // PURE TIMESTAMP-BASED PACING (1 saniyeye yayılmış smooth trafik)
-    // ==========================================
-    //
-    // Hedef: 200 Mbit/s = 25 MB/s = ~16,480 paket/s
-    // Her paket arası = 1,000,000 µs / 16,480 ≈ 60.7 µs
-    //
-    // Bu sayede trafik 1 saniyeye eşit olarak yayılır, burst OLMAZ.
+    // PACING SETUP
     // ==========================================
     uint64_t tsc_hz = rte_get_tsc_hz();
 
+#if TOKEN_BUCKET_TX_ENABLED
+    // TOKEN BUCKET: Her VL-IDX 1ms'de 1 paket
+    // Total VL count across all targets
+    uint16_t total_tb_vl_count = 0;
+    for (int t = 0; t < target_count; t++)
+        total_tb_vl_count += port_config->targets[t].vl_id_count;
+    uint64_t packets_per_sec = (uint64_t)total_tb_vl_count * 1000;
+    uint64_t delay_cycles = (packets_per_sec > 0) ? (tsc_hz / packets_per_sec) : tsc_hz;
+#else
     // Hassas hesaplama: rate_mbps -> bytes/sec -> packets/sec -> cycles/packet
     // IMIX: Ortalama paket boyutu kullan
     uint64_t bytes_per_sec = (uint64_t)params->rate_mbps * 125000ULL;  // Mbit/s -> bytes/s
     uint64_t packets_per_sec = bytes_per_sec / avg_pkt_size;
     uint64_t delay_cycles = (packets_per_sec > 0) ? (tsc_hz / packets_per_sec) : tsc_hz;
+#endif
 
     // Mikrosaniye cinsinden paket arası süre (debug için)
     double inter_packet_us = (double)delay_cycles * 1000000.0 / (double)tsc_hz;
@@ -302,7 +306,9 @@ int dpdk_ext_tx_worker(void *arg)
 
     printf("ExtTX Worker started: Port %u Q%u, %u targets, Rate %u Mbps\n",
            params->port_id, params->queue_id, target_count, params->rate_mbps);
-#if IMIX_ENABLED
+#if TOKEN_BUCKET_TX_ENABLED
+    printf("  *** TOKEN BUCKET MODE - %u total VL-IDX, 1ms window ***\n", total_tb_vl_count);
+#elif IMIX_ENABLED
     printf("  *** IMIX MODE + SMOOTH PACING ***\n");
     printf("  -> IMIX pattern: 100, 200, 400, 800, 1200x3, 1518x3 (avg=%lu bytes)\n", avg_pkt_size);
     printf("  -> Worker offset: %u (hybrid shuffle)\n", imix_offset);

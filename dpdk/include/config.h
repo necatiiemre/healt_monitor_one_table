@@ -129,6 +129,28 @@ struct raw_rx_source_config
   uint16_t vl_id_count; // Beklenen VL-ID sayısı
 };
 
+#if TOKEN_BUCKET_TX_ENABLED
+// ==========================================
+// TOKEN BUCKET: Port 12 TX (non-contiguous VL-IDs, VLAN'sız)
+// ==========================================
+// 4 target × 16 VL = 64 VL total → 64000 pkt/s
+// VL-IDs are non-contiguous (4'lü bloklar, 8'lik step)
+// raw_tx_worker VL-ID lookup tabloları kullanacak
+#define PORT_12_TX_TARGET_COUNT 4
+#define PORT_12_TX_TARGETS_INIT {                                                                \
+    {.target_id = 0, .dest_port = 5, .rate_mbps = 195, .vl_id_start = 4163, .vl_id_count = 16}, \
+    {.target_id = 1, .dest_port = 4, .rate_mbps = 195, .vl_id_start = 4195, .vl_id_count = 16}, \
+    {.target_id = 2, .dest_port = 3, .rate_mbps = 195, .vl_id_start = 4227, .vl_id_count = 16}, \
+    {.target_id = 3, .dest_port = 2, .rate_mbps = 195, .vl_id_start = 4259, .vl_id_count = 16}, \
+}
+
+// Token bucket Port 12 VL-ID lookup tables (non-contiguous ranges)
+// Each target has 16 VL-IDs in 4 blocks of 4 (step=8)
+#define TB_PORT_12_VL_BLOCK_SIZE  4
+#define TB_PORT_12_VL_BLOCK_STEP  8
+// VL-ID hesaplama: vl_id_start + (offset / block_size) * block_step + (offset % block_size)
+
+#else
 // Port 12 TX Targets (4 hedef, toplam 880 Mbps)
 // Port 13'e gönderim kaldırıldı, sadece DPDK portlarına (2,3,4,5) gönderim
 // 4 × 220 Mbps = 880 Mbps total (1G link, ~89% utilization — safe margin)
@@ -139,6 +161,7 @@ struct raw_rx_source_config
     {.target_id = 2, .dest_port = 4, .rate_mbps = 220, .vl_id_start = 4195, .vl_id_count = 32}, \
     {.target_id = 3, .dest_port = 5, .rate_mbps = 220, .vl_id_start = 4163, .vl_id_count = 32}, \
 }
+#endif
 
 // Port 12 RX Sources (Port 13'ten gelen paketler kaldırıldı)
 // Artık sadece DPDK External TX (Port 2,3,4,5) paketleri alınıyor
@@ -147,6 +170,24 @@ struct raw_rx_source_config
   {                             \
   }
 
+#if TOKEN_BUCKET_TX_ENABLED
+// ==========================================
+// TOKEN BUCKET: Port 13 TX (non-contiguous VL-IDs, VLAN'sız)
+// ==========================================
+// 2 target × 3 VL = 6 VL total → 6000 pkt/s
+// VL-IDs: step=4 aralıklı tekil VL-IDX'ler
+#define PORT_13_TX_TARGET_COUNT 2
+#define PORT_13_TX_TARGETS_INIT {                                                              \
+    {.target_id = 0, .dest_port = 7, .rate_mbps = 37, .vl_id_start = 4131, .vl_id_count = 3}, \
+    {.target_id = 1, .dest_port = 1, .rate_mbps = 37, .vl_id_start = 4147, .vl_id_count = 3}, \
+}
+
+// Token bucket Port 13 VL-ID lookup: step=4, block_size=1
+#define TB_PORT_13_VL_BLOCK_SIZE  1
+#define TB_PORT_13_VL_BLOCK_STEP  4
+// VL-ID hesaplama: vl_id_start + offset * block_step
+
+#else
 // Port 13 TX Targets (2 hedef, toplam ~90 Mbps)
 // Port 12'ye gönderim kaldırıldı, DPDK portlarına (7, 1) gönderim eklendi
 #define PORT_13_TX_TARGET_COUNT 2
@@ -154,6 +195,7 @@ struct raw_rx_source_config
     {.target_id = 0, .dest_port = 7, .rate_mbps = 45, .vl_id_start = 4131, .vl_id_count = 16}, \
     {.target_id = 1, .dest_port = 1, .rate_mbps = 45, .vl_id_start = 4147, .vl_id_count = 16}, \
 }
+#endif
 
 // Port 13 RX Sources (Port 12'den gelen paketler kaldırıldı)
 // Port 13 artık sadece TX yapıyor (Port 7 ve Port 1'e)
@@ -494,6 +536,33 @@ struct port_vlan_config
 #define RATE_LIMITER_ENABLED 1
 #endif
 
+// ==========================================
+// TOKEN BUCKET TX MODE
+// ==========================================
+// 0 = Mevcut smooth pacing modu (rate limiter tabanlı)
+// 1 = Token bucket modu: Her 1ms'de her VL-IDX'ten 1 paket
+//
+// Token bucket'ta VL aralıkları port bazlı:
+//   Port 1, 7 (ext TX yok): 74 VL per queue
+//   Diğer portlar: 70 VL per queue
+//
+// Rate otomatik hesaplanır: VL_count × 1000 pkt/s
+#ifndef TOKEN_BUCKET_TX_ENABLED
+#define TOKEN_BUCKET_TX_ENABLED 0
+#endif
+
+#if TOKEN_BUCKET_TX_ENABLED
+// Per-port VL range size for token bucket mode
+#define TB_VL_RANGE_SIZE_DEFAULT 70
+#define TB_VL_RANGE_SIZE_NO_EXT  74   // Port 1, 7 (no external TX)
+#define GET_TB_VL_RANGE_SIZE(port_id) \
+    (((port_id) == 1 || (port_id) == 7) ? TB_VL_RANGE_SIZE_NO_EXT : TB_VL_RANGE_SIZE_DEFAULT)
+
+// Token bucket window: 1ms
+#define TB_WINDOW_MS 1
+#define TB_PACKETS_PER_VL_PER_WINDOW 1
+#endif
+
 // Kuyruk sayıları core sayılarına eşittir
 #define NUM_TX_QUEUES_PER_PORT NUM_TX_CORES
 #define NUM_RX_QUEUES_PER_PORT NUM_RX_CORES
@@ -556,6 +625,49 @@ struct dpdk_ext_tx_port_config
   struct dpdk_ext_tx_target targets[DPDK_EXT_TX_QUEUES_PER_PORT];
 };
 
+#if TOKEN_BUCKET_TX_ENABLED
+// ==========================================
+// TOKEN BUCKET: DPDK External TX → Port 12
+// ==========================================
+// Her VLAN'dan 4 VL-IDX, her VL-IDX 1ms'de 1 paket
+// Port başı: 4 VLAN × 4 VL = 16 VL → 16000 pkt/s
+
+// Port 2: VLAN 97-100 → Port 12 (4 VL per VLAN)
+#define DPDK_EXT_TX_PORT_2_TARGETS {                                                          \
+    {.queue_id = 0, .vlan_id = 97, .vl_id_start = 4191, .vl_id_count = 4, .rate_mbps = 49},   \
+    {.queue_id = 1, .vlan_id = 98, .vl_id_start = 4299, .vl_id_count = 4, .rate_mbps = 49},   \
+    {.queue_id = 2, .vlan_id = 99, .vl_id_start = 4307, .vl_id_count = 4, .rate_mbps = 49},   \
+    {.queue_id = 3, .vlan_id = 100, .vl_id_start = 4315, .vl_id_count = 4, .rate_mbps = 49},  \
+}
+
+// Port 3: VLAN 101-104 → Port 12 (4 VL per VLAN)
+#define DPDK_EXT_TX_PORT_3_TARGETS {                                                          \
+    {.queue_id = 0, .vlan_id = 101, .vl_id_start = 4323, .vl_id_count = 4, .rate_mbps = 49},  \
+    {.queue_id = 1, .vlan_id = 102, .vl_id_start = 4331, .vl_id_count = 4, .rate_mbps = 49},  \
+    {.queue_id = 2, .vlan_id = 103, .vl_id_start = 4339, .vl_id_count = 4, .rate_mbps = 49},  \
+    {.queue_id = 3, .vlan_id = 104, .vl_id_start = 4347, .vl_id_count = 4, .rate_mbps = 49},  \
+}
+
+// Port 4: VLAN 113-116 → Port 12 (4 VL per VLAN)
+#define DPDK_EXT_TX_PORT_4_TARGETS {                                                          \
+    {.queue_id = 0, .vlan_id = 113, .vl_id_start = 4355, .vl_id_count = 4, .rate_mbps = 49},  \
+    {.queue_id = 1, .vlan_id = 114, .vl_id_start = 4363, .vl_id_count = 4, .rate_mbps = 49},  \
+    {.queue_id = 2, .vlan_id = 115, .vl_id_start = 4371, .vl_id_count = 4, .rate_mbps = 49},  \
+    {.queue_id = 3, .vlan_id = 116, .vl_id_start = 4379, .vl_id_count = 4, .rate_mbps = 49},  \
+}
+
+// Port 5: VLAN 117-120 → Port 12 (4 VL per VLAN)
+#define DPDK_EXT_TX_PORT_5_TARGETS {                                                          \
+    {.queue_id = 0, .vlan_id = 117, .vl_id_start = 4387, .vl_id_count = 4, .rate_mbps = 49},  \
+    {.queue_id = 1, .vlan_id = 118, .vl_id_start = 4395, .vl_id_count = 4, .rate_mbps = 49},  \
+    {.queue_id = 2, .vlan_id = 119, .vl_id_start = 4403, .vl_id_count = 4, .rate_mbps = 49},  \
+    {.queue_id = 3, .vlan_id = 120, .vl_id_start = 4411, .vl_id_count = 4, .rate_mbps = 49},  \
+}
+
+#else
+// ==========================================
+// NORMAL MODE: DPDK External TX → Port 12
+// ==========================================
 // Port 2: VLAN 97-100, VL-ID 4291-4322
 // NOTE: Total external TX must not exceed Port 12's 1G capacity
 // 4 ports × 220 Mbps = 880 Mbps total (within 1G limit)
@@ -589,12 +701,32 @@ struct dpdk_ext_tx_port_config
     {.queue_id = 2, .vlan_id = 119, .vl_id_start = 4403, .vl_id_count = 8, .rate_mbps = 220}, \
     {.queue_id = 3, .vlan_id = 120, .vl_id_start = 4411, .vl_id_count = 8, .rate_mbps = 220}, \
 }
+#endif
 
 // ==========================================
 // PORT 0 ve PORT 6 → PORT 13 (100M bakır)
 // ==========================================
 // Port 0: 45 Mbps, Port 6: 45 Mbps = Toplam 90 Mbps
 
+#if TOKEN_BUCKET_TX_ENABLED
+// ==========================================
+// TOKEN BUCKET: DPDK External TX → Port 13
+// ==========================================
+// Port 0: 3 VLAN × 1 VL = 3 VL → 3000 pkt/s (VLAN 108 hariç)
+// Port 6: 3 VLAN × 1 VL = 3 VL → 3000 pkt/s (VLAN 124 hariç)
+#define DPDK_EXT_TX_PORT_0_TARGETS {                                                         \
+    {.queue_id = 0, .vlan_id = 105, .vl_id_start = 4099, .vl_id_count = 1, .rate_mbps = 13}, \
+    {.queue_id = 1, .vlan_id = 106, .vl_id_start = 4103, .vl_id_count = 1, .rate_mbps = 13}, \
+    {.queue_id = 2, .vlan_id = 107, .vl_id_start = 4107, .vl_id_count = 1, .rate_mbps = 13}, \
+}
+
+#define DPDK_EXT_TX_PORT_6_TARGETS {                                                         \
+    {.queue_id = 0, .vlan_id = 121, .vl_id_start = 4115, .vl_id_count = 1, .rate_mbps = 13}, \
+    {.queue_id = 1, .vlan_id = 122, .vl_id_start = 4119, .vl_id_count = 1, .rate_mbps = 13}, \
+    {.queue_id = 2, .vlan_id = 123, .vl_id_start = 4123, .vl_id_count = 1, .rate_mbps = 13}, \
+}
+
+#else
 // Port 0: VLAN 105-108, VL-ID 4099-4114 → Port 13 (toplam 45 Mbps)
 #define DPDK_EXT_TX_PORT_0_TARGETS {                                                         \
     {.queue_id = 0, .vlan_id = 105, .vl_id_start = 4099, .vl_id_count = 4, .rate_mbps = 45}, \
@@ -610,9 +742,21 @@ struct dpdk_ext_tx_port_config
     {.queue_id = 2, .vlan_id = 123, .vl_id_start = 4123, .vl_id_count = 4, .rate_mbps = 45}, \
     {.queue_id = 3, .vlan_id = 124, .vl_id_start = 4127, .vl_id_count = 4, .rate_mbps = 45}, \
 }
+#endif
 
 // All external TX port configurations
 // Port 2,3,4,5 → Port 12 (1G) | Port 0,6 → Port 13 (100M)
+#if TOKEN_BUCKET_TX_ENABLED
+// Token bucket: Port 0,6 have 3 targets (VLAN 108/124 excluded from P13)
+#define DPDK_EXT_TX_PORTS_CONFIG_INIT {                                                        \
+    {.port_id = 2, .dest_port = 12, .target_count = 4, .targets = DPDK_EXT_TX_PORT_2_TARGETS}, \
+    {.port_id = 3, .dest_port = 12, .target_count = 4, .targets = DPDK_EXT_TX_PORT_3_TARGETS}, \
+    {.port_id = 4, .dest_port = 12, .target_count = 4, .targets = DPDK_EXT_TX_PORT_4_TARGETS}, \
+    {.port_id = 5, .dest_port = 12, .target_count = 4, .targets = DPDK_EXT_TX_PORT_5_TARGETS}, \
+    {.port_id = 0, .dest_port = 13, .target_count = 3, .targets = DPDK_EXT_TX_PORT_0_TARGETS}, \
+    {.port_id = 6, .dest_port = 13, .target_count = 3, .targets = DPDK_EXT_TX_PORT_6_TARGETS}, \
+}
+#else
 #define DPDK_EXT_TX_PORTS_CONFIG_INIT {                                                        \
     {.port_id = 2, .dest_port = 12, .target_count = 4, .targets = DPDK_EXT_TX_PORT_2_TARGETS}, \
     {.port_id = 3, .dest_port = 12, .target_count = 4, .targets = DPDK_EXT_TX_PORT_3_TARGETS}, \
@@ -621,7 +765,27 @@ struct dpdk_ext_tx_port_config
     {.port_id = 0, .dest_port = 13, .target_count = 4, .targets = DPDK_EXT_TX_PORT_0_TARGETS}, \
     {.port_id = 6, .dest_port = 13, .target_count = 4, .targets = DPDK_EXT_TX_PORT_6_TARGETS}, \
 }
+#endif
 
+#if TOKEN_BUCKET_TX_ENABLED
+// Token bucket: RX sources for DPDK external packets
+// Port 12 receives from Port 2,3,4,5 (16 VL each → non-contiguous)
+#define PORT_12_DPDK_EXT_RX_SOURCE_COUNT 4
+#define PORT_12_DPDK_EXT_RX_SOURCES_INIT {                      \
+    {.source_port = 2, .vl_id_start = 4191, .vl_id_count = 16}, \
+    {.source_port = 3, .vl_id_start = 4323, .vl_id_count = 16}, \
+    {.source_port = 4, .vl_id_start = 4355, .vl_id_count = 16}, \
+    {.source_port = 5, .vl_id_start = 4387, .vl_id_count = 16}, \
+}
+
+// Port 13 receives from Port 0,6 (3 VL each → non-contiguous)
+#define PORT_13_DPDK_EXT_RX_SOURCE_COUNT 2
+#define PORT_13_DPDK_EXT_RX_SOURCES_INIT {                      \
+    {.source_port = 0, .vl_id_start = 4099, .vl_id_count = 3},  \
+    {.source_port = 6, .vl_id_start = 4115, .vl_id_count = 3},  \
+}
+
+#else
 // Port 12 RX sources for DPDK external packets (from Port 2,3,4,5)
 // VL-ID ranges must match what each port's DPDK_EXT_TX actually sends
 #define PORT_12_DPDK_EXT_RX_SOURCE_COUNT 4
@@ -639,6 +803,7 @@ struct dpdk_ext_tx_port_config
     {.source_port = 0, .vl_id_start = 4099, .vl_id_count = 16}, \
     {.source_port = 6, .vl_id_start = 4115, .vl_id_count = 16}, \
 }
+#endif
 
 // ==========================================
 // PTP (IEEE 1588v2) CONFIGURATION
