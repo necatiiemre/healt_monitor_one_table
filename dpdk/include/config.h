@@ -628,7 +628,7 @@ struct dpdk_ext_tx_port_config
 
 // Port 2: VLAN 97-100 → Port 12 (4 VL per VLAN)
 #define DPDK_EXT_TX_PORT_2_TARGETS {                                                          \
-    {.queue_id = 0, .vlan_id = 97, .vl_id_start = 4191, .vl_id_count = 4, .rate_mbps = 49},   \
+    {.queue_id = 0, .vlan_id = 97, .vl_id_start = 4291, .vl_id_count = 4, .rate_mbps = 49},   \
     {.queue_id = 1, .vlan_id = 98, .vl_id_start = 4299, .vl_id_count = 4, .rate_mbps = 49},   \
     {.queue_id = 2, .vlan_id = 99, .vl_id_start = 4307, .vl_id_count = 4, .rate_mbps = 49},   \
     {.queue_id = 3, .vlan_id = 100, .vl_id_start = 4315, .vl_id_count = 4, .rate_mbps = 49},  \
@@ -766,7 +766,7 @@ struct dpdk_ext_tx_port_config
 // Port 12 receives from Port 2,3,4,5 (16 VL each → non-contiguous)
 #define PORT_12_DPDK_EXT_RX_SOURCE_COUNT 4
 #define PORT_12_DPDK_EXT_RX_SOURCES_INIT {                      \
-    {.source_port = 2, .vl_id_start = 4191, .vl_id_count = 16}, \
+    {.source_port = 2, .vl_id_start = 4291, .vl_id_count = 16}, \
     {.source_port = 3, .vl_id_start = 4323, .vl_id_count = 16}, \
     {.source_port = 4, .vl_id_start = 4355, .vl_id_count = 16}, \
     {.source_port = 5, .vl_id_start = 4387, .vl_id_count = 16}, \
