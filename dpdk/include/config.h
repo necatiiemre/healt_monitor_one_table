@@ -6,6 +6,27 @@
 #define stringify(x) #x
 
 // ==========================================
+// TOKEN BUCKET TX MODE (must be defined early, used throughout)
+// ==========================================
+// 0 = Mevcut smooth pacing modu (rate limiter tabanlı)
+// 1 = Token bucket modu: Her 1ms'de her VL-IDX'ten 1 paket
+#ifndef TOKEN_BUCKET_TX_ENABLED
+#define TOKEN_BUCKET_TX_ENABLED 0
+#endif
+
+#if TOKEN_BUCKET_TX_ENABLED
+// Per-port VL range size for token bucket mode
+#define TB_VL_RANGE_SIZE_DEFAULT 70
+#define TB_VL_RANGE_SIZE_NO_EXT  74   // Port 1, 7 (no external TX)
+#define GET_TB_VL_RANGE_SIZE(port_id) \
+    (((port_id) == 1 || (port_id) == 7) ? TB_VL_RANGE_SIZE_NO_EXT : TB_VL_RANGE_SIZE_DEFAULT)
+
+// Token bucket window: 1ms
+#define TB_WINDOW_MS 1
+#define TB_PACKETS_PER_VL_PER_WINDOW 1
+#endif
+
+// ==========================================
 // LATENCY TEST CONFIGURATION
 // ==========================================
 // Etkinleştirildiğinde:
@@ -534,33 +555,6 @@ struct port_vlan_config
 
 #ifndef RATE_LIMITER_ENABLED
 #define RATE_LIMITER_ENABLED 1
-#endif
-
-// ==========================================
-// TOKEN BUCKET TX MODE
-// ==========================================
-// 0 = Mevcut smooth pacing modu (rate limiter tabanlı)
-// 1 = Token bucket modu: Her 1ms'de her VL-IDX'ten 1 paket
-//
-// Token bucket'ta VL aralıkları port bazlı:
-//   Port 1, 7 (ext TX yok): 74 VL per queue
-//   Diğer portlar: 70 VL per queue
-//
-// Rate otomatik hesaplanır: VL_count × 1000 pkt/s
-#ifndef TOKEN_BUCKET_TX_ENABLED
-#define TOKEN_BUCKET_TX_ENABLED 0
-#endif
-
-#if TOKEN_BUCKET_TX_ENABLED
-// Per-port VL range size for token bucket mode
-#define TB_VL_RANGE_SIZE_DEFAULT 70
-#define TB_VL_RANGE_SIZE_NO_EXT  74   // Port 1, 7 (no external TX)
-#define GET_TB_VL_RANGE_SIZE(port_id) \
-    (((port_id) == 1 || (port_id) == 7) ? TB_VL_RANGE_SIZE_NO_EXT : TB_VL_RANGE_SIZE_DEFAULT)
-
-// Token bucket window: 1ms
-#define TB_WINDOW_MS 1
-#define TB_PACKETS_PER_VL_PER_WINDOW 1
 #endif
 
 // Kuyruk sayıları core sayılarına eşittir
