@@ -281,12 +281,12 @@ int dpdk_ext_tx_worker(void *arg)
     uint64_t tsc_hz = rte_get_tsc_hz();
 
 #if TOKEN_BUCKET_TX_ENABLED
-    // TOKEN BUCKET: Her VL-IDX 1ms'de 1 paket
+    // TOKEN BUCKET: Her VL-IDX TB_WINDOW_MS'de TB_PACKETS_PER_VL_PER_WINDOW paket
     // Total VL count across all targets
     uint16_t total_tb_vl_count = 0;
     for (int t = 0; t < target_count; t++)
         total_tb_vl_count += port_config->targets[t].vl_id_count;
-    uint64_t packets_per_sec = (uint64_t)total_tb_vl_count * 1000;
+    uint64_t packets_per_sec = (uint64_t)total_tb_vl_count * TB_PACKETS_PER_VL_PER_WINDOW * 1000 / TB_WINDOW_MS;
     uint64_t delay_cycles = (packets_per_sec > 0) ? (tsc_hz / packets_per_sec) : tsc_hz;
 #else
     // Hassas hesaplama: rate_mbps -> bytes/sec -> packets/sec -> cycles/packet

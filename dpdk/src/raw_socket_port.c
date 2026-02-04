@@ -906,12 +906,13 @@ int init_raw_socket_port(int raw_index, const struct raw_socket_port_config *con
                                       t, config->tx_target_count);
 
 #if TOKEN_BUCKET_TX_ENABLED
-        // TOKEN BUCKET: Override delay_ns based on VL count (1 pkt per VL per 1ms)
-        // delay_ns = 1ms / vl_id_count (per target)
+        // TOKEN BUCKET: Override delay_ns based on VL count and window
+        // delay_ns = TB_WINDOW_MS(ms) / (vl_id_count * TB_PACKETS_PER_VL_PER_WINDOW)
         if (target->config.vl_id_count > 0) {
-            target->limiter.delay_ns = 1000000ULL / target->config.vl_id_count;
-            printf("[Token Bucket] Port %u Target %d: delay_ns=%lu (VL count=%u)\n",
-                   config->port_id, t, target->limiter.delay_ns, target->config.vl_id_count);
+            target->limiter.delay_ns = (uint64_t)TB_WINDOW_MS * 1000000ULL /
+                (target->config.vl_id_count * TB_PACKETS_PER_VL_PER_WINDOW);
+            printf("[Token Bucket] Port %u Target %d: delay_ns=%lu (VL count=%u, window=%ums)\n",
+                   config->port_id, t, target->limiter.delay_ns, target->config.vl_id_count, TB_WINDOW_MS);
         }
 #endif
 
