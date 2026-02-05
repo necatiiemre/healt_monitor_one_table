@@ -1369,23 +1369,18 @@ int rx_worker(void *arg)
                                                                 &expected_init, 1,
                                                                 false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
                                 {
+                                    __atomic_store_n(&raw_seq_tracker->min_seq, raw_seq, __ATOMIC_RELEASE);
                                     __atomic_store_n(&raw_seq_tracker->expected_seq, raw_seq + 1, __ATOMIC_RELEASE);
                                 }
                             }
                             else
                             {
-                                // Real-time gap detection
-                                uint64_t expected = __atomic_load_n(&raw_seq_tracker->expected_seq, __ATOMIC_ACQUIRE);
-                                if (raw_seq > expected)
-                                {
-                                    local_lost += (raw_seq - expected);
-                                    printf("*** LOSS DETECTED [RAW] Port %u Q%u: VL-ID=%u expected_seq=%lu got_seq=%lu gap=%lu ***\n",
-                                           params->port_id, params->queue_id, raw_vl_id, expected, raw_seq, raw_seq - expected);
-                                }
-                                if (raw_seq >= expected)
-                                {
-                                    __atomic_store_n(&raw_seq_tracker->expected_seq, raw_seq + 1, __ATOMIC_RELEASE);
-                                }
+                                // Multi-queue NOT: Raw socket paketler VLAN tag'sız geldiği için
+                                // NIC RSS onları farklı RX queue'lara dağıtabilir. Bu durumda
+                                // Q1 daha yüksek seq'i Q0'dan önce işleyebilir → false positive gap.
+                                // Bu yüzden real-time gap detection KULLANILMAZ.
+                                // Kayıp tespiti watermark-based (max_seq+1 - pkt_count) ile yapılır
+                                // çünkü pkt_count ve max_seq atomic CAS ile güvenli.
                             }
 
                             // Update max_seq if this sequence is higher
@@ -1510,23 +1505,16 @@ int rx_worker(void *arg)
                                                                 &expected_init, 1,
                                                                 false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
                                 {
+                                    __atomic_store_n(&ext_seq_tracker->min_seq, ext_seq, __ATOMIC_RELEASE);
                                     __atomic_store_n(&ext_seq_tracker->expected_seq, ext_seq + 1, __ATOMIC_RELEASE);
                                 }
                             }
                             else
                             {
-                                // Real-time gap detection
-                                uint64_t expected = __atomic_load_n(&ext_seq_tracker->expected_seq, __ATOMIC_ACQUIRE);
-                                if (ext_seq > expected)
-                                {
-                                    local_lost += (ext_seq - expected);
-                                    printf("*** LOSS DETECTED [EXT] Port %u Q%u: VL-ID=%u expected_seq=%lu got_seq=%lu gap=%lu ***\n",
-                                           params->port_id, params->queue_id, vl_id, expected, ext_seq, ext_seq - expected);
-                                }
-                                if (ext_seq >= expected)
-                                {
-                                    __atomic_store_n(&ext_seq_tracker->expected_seq, ext_seq + 1, __ATOMIC_RELEASE);
-                                }
+                                // Multi-queue NOT: External/raw socket paketler VLAN tag'sız
+                                // geldiği için NIC RSS onları farklı RX queue'lara dağıtabilir.
+                                // Gap detection (expected_seq) multi-queue OOO'da false positive verir.
+                                // Kayıp tespiti watermark-based (max_seq+1 - pkt_count) ile yapılır.
                             }
 
                             // Update max_seq if this sequence is higher (CAS loop)
@@ -1570,7 +1558,8 @@ int rx_worker(void *arg)
                                                         &expected_init, 1,
                                                         false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
                         {
-                            // We won the race - initialize expected_seq
+                            // We won the race - initialize expected_seq and min_seq
+                            __atomic_store_n(&seq_tracker->min_seq, seq, __ATOMIC_RELEASE);
                             __atomic_store_n(&seq_tracker->expected_seq, seq + 1, __ATOMIC_RELEASE);
                         }
                     }
@@ -1743,11 +1732,12 @@ int rx_worker(void *arg)
             if (__atomic_load_n(&seq_tracker->initialized, __ATOMIC_ACQUIRE))
             {
                 uint64_t max_seq = __atomic_load_n(&seq_tracker->max_seq, __ATOMIC_ACQUIRE);
+                uint64_t min_seq = __atomic_load_n(&seq_tracker->min_seq, __ATOMIC_ACQUIRE);
                 uint64_t pkt_count = __atomic_load_n(&seq_tracker->pkt_count, __ATOMIC_ACQUIRE);
 
-                // Lost = expected total (max_seq + 1) - actual received
-                // Assuming sequences start from 0
-                uint64_t expected_count = max_seq + 1;
+                // Lost = expected total (max_seq - min_seq + 1) - actual received
+                // min_seq handles sequences that don't start from 0 (e.g., after restart)
+                uint64_t expected_count = max_seq - min_seq + 1;
                 if (expected_count > pkt_count)
                 {
                     total_lost += (expected_count - pkt_count);

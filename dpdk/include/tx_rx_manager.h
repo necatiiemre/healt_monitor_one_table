@@ -76,6 +76,7 @@ extern struct rx_stats rx_stats_per_port[MAX_PORTS];
  */
 struct vl_sequence_tracker {
     volatile uint64_t max_seq;       // Highest sequence seen for this VL-ID
+    volatile uint64_t min_seq;       // Lowest sequence seen (first packet - for watermark calc)
     volatile uint64_t pkt_count;     // Total packets received for this VL-ID
     volatile uint64_t expected_seq;  // Expected next sequence for real-time gap detection
     volatile int initialized;        // Has this VL-ID been seen before? (0=false, 1=true)
