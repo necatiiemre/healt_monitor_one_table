@@ -1094,6 +1094,25 @@ void *raw_tx_worker(void *arg)
                target->config.dest_port);
     }
 
+    // Startup timing reset: next_send_time limiter init sırasında ayarlandı
+    // ama thread çok daha sonra başlıyor (100ms+ fark olabilir).
+    // Bu birikmiş borç startup'ta catch-up burst'üne neden olur.
+    // Thread başlarken timing'i sıfırlayarak bunu engelliyoruz.
+    {
+        uint64_t tx_start_ns = get_time_ns();
+        for (int t = 0; t < port->tx_target_count; t++) {
+            struct raw_tx_target_state *target = &port->tx_targets[t];
+            uint64_t stagger_ns = (uint64_t)t * 50000000ULL;  // 50ms per target
+            uint64_t phase_ns = 0;
+            if (port->tx_target_count > 1) {
+                phase_ns = (uint64_t)t * (target->limiter.delay_ns / port->tx_target_count);
+            }
+            target->limiter.next_send_time_ns = tx_start_ns + stagger_ns + phase_ns;
+        }
+        printf("[Port %u TX] Timing reset at thread start (base=%lu ns)\n",
+               port->port_id, tx_start_ns);
+    }
+
     uint32_t batch_count = 0;
 #if TOKEN_BUCKET_TX_ENABLED
     // Küçük batch: 16 paket per flush → kernel burst'ü sınırla
