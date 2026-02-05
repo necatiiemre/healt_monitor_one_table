@@ -891,7 +891,7 @@ int tx_worker(void *arg)
 #if TOKEN_BUCKET_TX_ENABLED
     // TOKEN BUCKET: Her VL-IDX TB_WINDOW_MS'de TB_PACKETS_PER_VL_PER_WINDOW paket
     // Rate = vl_range_size × TB_PACKETS_PER_VL_PER_WINDOW × (1000 / TB_WINDOW_MS) pkt/s
-    uint64_t packets_per_sec = (uint64_t)vl_range_size * TB_PACKETS_PER_VL_PER_WINDOW * 1000 / TB_WINDOW_MS;
+    uint64_t packets_per_sec = (uint64_t)((double)vl_range_size * TB_PACKETS_PER_VL_PER_WINDOW * 1000.0 / TB_WINDOW_MS);
     uint64_t delay_cycles = tsc_hz / packets_per_sec;
 #else
     // Rate hesaplama: limiter.tokens_per_sec zaten bytes/sec

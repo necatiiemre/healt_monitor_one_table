@@ -21,8 +21,8 @@
 #define GET_TB_VL_RANGE_SIZE(port_id) \
     (((port_id) == 1 || (port_id) == 7) ? TB_VL_RANGE_SIZE_NO_EXT : TB_VL_RANGE_SIZE_DEFAULT)
 
-// Token bucket window: 1ms
-#define TB_WINDOW_MS 1
+// Token bucket window (ms) - can be fractional (e.g., 1.0, 1.4, 2.5)
+#define TB_WINDOW_MS 1.0
 #define TB_PACKETS_PER_VL_PER_WINDOW 1
 #endif
 

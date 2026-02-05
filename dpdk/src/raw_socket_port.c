@@ -909,9 +909,9 @@ int init_raw_socket_port(int raw_index, const struct raw_socket_port_config *con
         // TOKEN BUCKET: Override delay_ns based on VL count and window
         // delay_ns = TB_WINDOW_MS(ms) / (vl_id_count * TB_PACKETS_PER_VL_PER_WINDOW)
         if (target->config.vl_id_count > 0) {
-            target->limiter.delay_ns = (uint64_t)TB_WINDOW_MS * 1000000ULL /
-                (target->config.vl_id_count * TB_PACKETS_PER_VL_PER_WINDOW);
-            printf("[Token Bucket] Port %u Target %d: delay_ns=%lu (VL count=%u, window=%ums)\n",
+            target->limiter.delay_ns = (uint64_t)(TB_WINDOW_MS * 1000000.0 /
+                (target->config.vl_id_count * TB_PACKETS_PER_VL_PER_WINDOW));
+            printf("[Token Bucket] Port %u Target %d: delay_ns=%lu (VL count=%u, window=%.1fms)\n",
                    config->port_id, t, target->limiter.delay_ns, target->config.vl_id_count, TB_WINDOW_MS);
         }
 #endif
