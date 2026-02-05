@@ -1379,6 +1379,8 @@ int rx_worker(void *arg)
                                 if (raw_seq > expected)
                                 {
                                     local_lost += (raw_seq - expected);
+                                    printf("*** LOSS DETECTED [RAW] Port %u Q%u: VL-ID=%u expected_seq=%lu got_seq=%lu gap=%lu ***\n",
+                                           params->port_id, params->queue_id, raw_vl_id, expected, raw_seq, raw_seq - expected);
                                 }
                                 if (raw_seq >= expected)
                                 {
@@ -1518,6 +1520,8 @@ int rx_worker(void *arg)
                                 if (ext_seq > expected)
                                 {
                                     local_lost += (ext_seq - expected);
+                                    printf("*** LOSS DETECTED [EXT] Port %u Q%u: VL-ID=%u expected_seq=%lu got_seq=%lu gap=%lu ***\n",
+                                           params->port_id, params->queue_id, vl_id, expected, ext_seq, ext_seq - expected);
                                 }
                                 if (ext_seq >= expected)
                                 {
@@ -1578,6 +1582,8 @@ int rx_worker(void *arg)
                         {
                             // Gap detected - packets lost
                             local_lost += (seq - expected);
+                            printf("*** LOSS DETECTED [DPDK] Port %u Q%u: VL-ID=%u expected_seq=%lu got_seq=%lu gap=%lu (src_port=%u) ***\n",
+                                   params->port_id, params->queue_id, vl_id, expected, seq, seq - expected, params->src_port_id);
                         }
                         // Update expected_seq (even if seq < expected, move forward)
                         if (seq >= expected)
