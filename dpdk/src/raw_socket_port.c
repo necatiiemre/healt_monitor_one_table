@@ -1238,6 +1238,14 @@ void *raw_tx_worker(void *arg)
             }
         }
 #if TOKEN_BUCKET_TX_ENABLED
+        // Round sonrası flush: Her round'da target_count kadar paket (her switch port'a 1'er)
+        // kernel'e küçük batch halinde gönderilir → 1G link'te micro-burst önlenir
+        // BATCH_SIZE=64 ile 16 round birikirdi → 64 paket tek seferde = 774μs burst
+        // Şimdi her round sonrası flush → 4 paket tek seferde = 48μs (Port 12)
+        if (batch_count > 0) {
+            send(port->tx_socket, NULL, 0, 0);
+            batch_count = 0;
+        }
         }  // end while (any_due) round-robin
 #endif
 
