@@ -911,8 +911,19 @@ int init_raw_socket_port(int raw_index, const struct raw_socket_port_config *con
         if (target->config.vl_id_count > 0) {
             target->limiter.delay_ns = (uint64_t)(TB_WINDOW_MS * 1000000.0 /
                 (target->config.vl_id_count * TB_PACKETS_PER_VL_PER_WINDOW));
-            printf("[Token Bucket] Port %u Target %d: delay_ns=%lu (VL count=%u, window=%.1fms)\n",
-                   config->port_id, t, target->limiter.delay_ns, target->config.vl_id_count, TB_WINDOW_MS);
+
+            // Raw TX phase: Target'ları paket periyodu içinde eşit dağıt
+            // 50ms stagger tam katı olduğunda (50ms/62.5us=800.0) tüm target'lar
+            // aynı faza hizalanır → burst oluşur. Phase offset bunu kırar.
+            if (config->tx_target_count > 1) {
+                uint64_t raw_phase_ns = (uint64_t)t * (target->limiter.delay_ns / config->tx_target_count);
+                target->limiter.next_send_time_ns += raw_phase_ns;
+                printf("[Token Bucket] Port %u Target %d: delay_ns=%lu (VL count=%u, window=%.1fms), phase=%lu ns\n",
+                       config->port_id, t, target->limiter.delay_ns, target->config.vl_id_count, TB_WINDOW_MS, raw_phase_ns);
+            } else {
+                printf("[Token Bucket] Port %u Target %d: delay_ns=%lu (VL count=%u, window=%.1fms)\n",
+                       config->port_id, t, target->limiter.delay_ns, target->config.vl_id_count, TB_WINDOW_MS);
+            }
         }
 #endif
 
