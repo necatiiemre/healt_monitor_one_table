@@ -263,6 +263,9 @@ void init_raw_rate_limiter_smooth(struct raw_rate_limiter *limiter, uint32_t rat
     uint64_t stagger_offset = (uint64_t)target_id * stagger_interval_ns;
     limiter->next_send_time_ns = get_time_ns() + stagger_offset;
 
+    // Default catch-up limit (overridden by token bucket mode)
+    limiter->max_catchup_ns = 10000000ULL;  // 10ms default
+
     limiter->smooth_pacing_enabled = true;
 
     printf("[Raw Rate Limiter] Target %u: rate=%u Mbps, delay=%lu ns (%.2f us), "
@@ -286,8 +289,8 @@ bool raw_check_smooth_pacing(struct raw_rate_limiter *limiter)
         return false;
     }
 
-    // If we're too far behind (>10ms), reset to now (prevents large burst)
-    if (limiter->next_send_time_ns + 10000000ULL < now) {
+    // If we're too far behind, reset to now (prevents large burst)
+    if (limiter->next_send_time_ns + limiter->max_catchup_ns < now) {
         limiter->next_send_time_ns = now;
     }
 
@@ -918,12 +921,21 @@ int init_raw_socket_port(int raw_index, const struct raw_socket_port_config *con
             if (config->tx_target_count > 1) {
                 uint64_t raw_phase_ns = (uint64_t)t * (target->limiter.delay_ns / config->tx_target_count);
                 target->limiter.next_send_time_ns += raw_phase_ns;
-                printf("[Token Bucket] Port %u Target %d: delay_ns=%lu (VL count=%u, window=%.1fms), phase=%lu ns\n",
-                       config->port_id, t, target->limiter.delay_ns, target->config.vl_id_count, TB_WINDOW_MS, raw_phase_ns);
-            } else {
-                printf("[Token Bucket] Port %u Target %d: delay_ns=%lu (VL count=%u, window=%.1fms)\n",
-                       config->port_id, t, target->limiter.delay_ns, target->config.vl_id_count, TB_WINDOW_MS);
             }
+
+            // Sıkı catch-up limiti: default 10ms yerine delay × target_sayısı × 4
+            // Port 12 (1.2ms/16VL): 75μs × 4 × 4 = 1.2ms (10ms yerine)
+            // Port 13 (1.2ms/3VL):  400μs × 2 × 4 = 3.2ms (10ms yerine)
+            target->limiter.max_catchup_ns = target->limiter.delay_ns *
+                (uint64_t)config->tx_target_count * 4;
+
+            printf("[Token Bucket] Port %u Target %d: delay_ns=%lu (VL=%u, win=%.1fms), "
+                   "phase=%lu ns, max_catchup=%lu us\n",
+                   config->port_id, t, target->limiter.delay_ns,
+                   target->config.vl_id_count, TB_WINDOW_MS,
+                   (config->tx_target_count > 1) ?
+                       (uint64_t)t * (target->limiter.delay_ns / config->tx_target_count) : 0UL,
+                   target->limiter.max_catchup_ns / 1000);
         }
 #endif
 
@@ -1079,7 +1091,9 @@ void *raw_tx_worker(void *arg)
 
     uint32_t batch_count = 0;
     const uint32_t BATCH_SIZE = 64;  // Batch for kernel efficiency
-    const uint32_t MAX_CATCHUP_PER_TARGET = 64;  // Max packets per target per iteration (prevents burst-induced NIC drops on 1G link)
+#if !TOKEN_BUCKET_TX_ENABLED
+    const uint32_t MAX_CATCHUP_PER_TARGET = 64;  // Max packets per target per iteration
+#endif
     const uint64_t STATS_FLUSH_INTERVAL = 1024;    // Flush local stats every N packets (smaller = more accurate rate display)
 
     // Local stats accumulators per target (avoid per-packet lock)
@@ -1091,14 +1105,28 @@ void *raw_tx_worker(void *arg)
     while (!port->stop_flag && (g_stop_flag == NULL || !*g_stop_flag)) {
         bool any_sent = false;
 
-        // Smooth pacing: Check each target's timing
+#if TOKEN_BUCKET_TX_ENABLED
+        // Round-robin interleaved pacing: Her round'da her target'tan max 1 paket
+        // Eski mod: T0×64 → T1×64 → T2×64 → T3×64 (sequential burst)
+        // Yeni mod: T0→T1→T2→T3→T0→T1→T2→T3→... (interleaved, switch-friendly)
+        // Catch-up max_catchup_ns ile sınırlı, round-robin doğal olarak dağıtır
+        bool any_due = true;
+        while (any_due) {
+            any_due = false;
+#endif
         for (int t = 0; t < port->tx_target_count; t++) {
             struct raw_tx_target_state *target = &port->tx_targets[t];
-            uint32_t sent_this_target = 0;
 
-            // Send all packets that are due (catch-up), limited to MAX_CATCHUP_PER_TARGET
+#if TOKEN_BUCKET_TX_ENABLED
+            // Token bucket: 1 packet per target per round (round-robin interleaving)
+            if (raw_check_smooth_pacing(&target->limiter)) {
+                any_due = true;
+#else
+            uint32_t sent_this_target = 0;
+            // Legacy: burst all due packets per target (sequential)
             while (raw_check_smooth_pacing(&target->limiter) &&
                    sent_this_target < MAX_CATCHUP_PER_TARGET) {
+#endif
                 // Get current VL-ID
                 uint16_t vl_index = target->current_vl_offset;
 #if TOKEN_BUCKET_TX_ENABLED
@@ -1196,7 +1224,9 @@ void *raw_tx_worker(void *arg)
                 target->current_vl_offset = (target->current_vl_offset + 1) % target->config.vl_id_count;
                 any_sent = true;
                 batch_count++;
+#if !TOKEN_BUCKET_TX_ENABLED
                 sent_this_target++;
+#endif
 
                 // Flush batch periodically
                 if (batch_count >= BATCH_SIZE) {
@@ -1207,6 +1237,9 @@ void *raw_tx_worker(void *arg)
                 }
             }
         }
+#if TOKEN_BUCKET_TX_ENABLED
+        }  // end while (any_due) round-robin
+#endif
 
         // Flush any remaining packets
         if (batch_count > 0) {

@@ -106,6 +106,7 @@ struct raw_rate_limiter {
     // Smooth pacing fields (timestamp-based like DPDK)
     uint64_t delay_ns;           // Inter-packet delay in nanoseconds
     uint64_t next_send_time_ns;  // Next packet send time
+    uint64_t max_catchup_ns;     // Max time behind before reset (burst limiter)
     bool smooth_pacing_enabled;  // Use smooth pacing instead of token bucket
 };
 
