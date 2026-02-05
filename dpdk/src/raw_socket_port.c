@@ -289,9 +289,14 @@ bool raw_check_smooth_pacing(struct raw_rate_limiter *limiter)
         return false;
     }
 
-    // If we're too far behind, reset to now (prevents large burst)
+    // If we're too far behind, skip forward by whole delay periods
+    // Phase-preserving: next_send_time advances by multiples of delay_ns
+    // so the original phase offset between targets is maintained.
+    // Old: next_send_time = now (destroys phase → all targets fire simultaneously)
+    // New: next_send_time += N * delay_ns (preserves phase → targets stay staggered)
     if (limiter->next_send_time_ns + limiter->max_catchup_ns < now) {
-        limiter->next_send_time_ns = now;
+        uint64_t periods_behind = (now - limiter->next_send_time_ns) / limiter->delay_ns;
+        limiter->next_send_time_ns += periods_behind * limiter->delay_ns;
     }
 
     // Schedule next packet
@@ -1238,14 +1243,6 @@ void *raw_tx_worker(void *arg)
             }
         }
 #if TOKEN_BUCKET_TX_ENABLED
-        // Round sonrası flush: Her round'da target_count kadar paket (her switch port'a 1'er)
-        // kernel'e küçük batch halinde gönderilir → 1G link'te micro-burst önlenir
-        // BATCH_SIZE=64 ile 16 round birikirdi → 64 paket tek seferde = 774μs burst
-        // Şimdi her round sonrası flush → 4 paket tek seferde = 48μs (Port 12)
-        if (batch_count > 0) {
-            send(port->tx_socket, NULL, 0, 0);
-            batch_count = 0;
-        }
         }  // end while (any_due) round-robin
 #endif
 
