@@ -126,6 +126,9 @@ struct tx_worker_params
     uint16_t ext_vl_id_start;   // External TX VL-ID start
     uint16_t ext_vl_id_count;   // External TX VL-ID count
     struct rate_limiter ext_limiter;  // Separate rate limiter for external TX
+
+    // Phase distribution: total active port count (runtime)
+    uint16_t nb_ports;
 };
 
 /**

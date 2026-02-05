@@ -908,16 +908,20 @@ int tx_worker(void *arg)
     // Mikrosaniye cinsinden paket arası süre
     double inter_packet_us = (double)delay_cycles * 1000000.0 / (double)tsc_hz;
 
-    // Stagger: Her port/queue farklı zamanda başlar
+    // Stagger: Her port/queue farklı zamanda başlar (soft-start burst önleme)
     uint32_t stagger_slot = (params->port_id * 4 + params->queue_id) % 16;
     uint64_t stagger_offset = stagger_slot * (tsc_hz / 200);  // 5ms per slot
 
-    // Per-queue phase offset: Queue'ları paket periyodu içinde eşit dağıt
-    // Stagger offset delay_cycles'ın tam katı olduğunda tüm queue'lar aynı fazda
-    // ateş ediyor (ör: 5ms / 14.286μs = 350.0 tam sayı → hepsi aynı anda).
-    // Bu fix ile her queue, periyodun 1/NUM_TX_CORES'lık dilimine kayar.
-    uint64_t queue_phase = params->queue_id * (delay_cycles / NUM_TX_CORES);
-    uint64_t next_send_time = rte_get_tsc_cycles() + stagger_offset + queue_phase;
+    // Global worker phase: Tüm TX worker'ları paket periyodu içinde eşit dağıt
+    // Stagger offset delay_cycles'ın tam katı olduğunda tüm worker'lar aynı fazda
+    // ateş ediyor (ör: 5ms / 14.286μs = 350.0 tam sayı → 32 paket aynı anda!).
+    // Bu fix ile her worker, periyodun 1/total_workers'lık dilimine kayar.
+    // Örnek (8 port × 4 queue = 32 worker, 14.286μs periyot):
+    //   Worker 0: +0.000μs, Worker 1: +0.446μs, ... Worker 31: +13.84μs
+    uint32_t total_workers = params->nb_ports * NUM_TX_CORES;
+    uint32_t worker_idx = params->port_id * NUM_TX_CORES + params->queue_id;
+    uint64_t global_phase = worker_idx * (delay_cycles / total_workers);
+    uint64_t next_send_time = rte_get_tsc_cycles() + stagger_offset + global_phase;
 
     printf("TX Worker started: Port %u, Queue %u, Lcore %u, VLAN %u, VL_RANGE [%u..%u)\n",
            params->port_id, params->queue_id, params->lcore_id, params->vlan_id, vl_start, vl_end);
@@ -1882,6 +1886,7 @@ int start_txrx_workers(struct ports_config *ports_config, volatile bool *stop_fl
             tx_params[tx_param_idx].lcore_id = lcore_id;
             tx_params[tx_param_idx].vlan_id = tx_vlan;
             tx_params[tx_param_idx].stop_flag = stop_flag;
+            tx_params[tx_param_idx].nb_ports = ports_config->nb_ports;
 
             char pool_name[32];
             snprintf(pool_name, sizeof(pool_name), "mbuf_pool_%u_%u",
