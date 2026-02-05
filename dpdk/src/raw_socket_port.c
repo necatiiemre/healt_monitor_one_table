@@ -928,11 +928,11 @@ int init_raw_socket_port(int raw_index, const struct raw_socket_port_config *con
                 target->limiter.next_send_time_ns += raw_phase_ns;
             }
 
-            // Sıkı catch-up limiti: default 10ms yerine delay × target_sayısı × 4
-            // Port 12 (1.2ms/16VL): 75μs × 4 × 4 = 1.2ms (10ms yerine)
-            // Port 13 (1.2ms/3VL):  400μs × 2 × 4 = 3.2ms (10ms yerine)
+            // Sıkı catch-up limiti: delay × target_sayısı
+            // Port 12 (1.2ms/16VL): 75μs × 4 = 300μs → max 4 catch-up/target → 16 interleaved
+            // Port 13 (1.2ms/3VL):  400μs × 2 = 800μs → max 2 catch-up/target → 4 interleaved
             target->limiter.max_catchup_ns = target->limiter.delay_ns *
-                (uint64_t)config->tx_target_count * 4;
+                (uint64_t)config->tx_target_count;
 
             printf("[Token Bucket] Port %u Target %d: delay_ns=%lu (VL=%u, win=%.1fms), "
                    "phase=%lu ns, max_catchup=%lu us\n",
@@ -1095,8 +1095,13 @@ void *raw_tx_worker(void *arg)
     }
 
     uint32_t batch_count = 0;
+#if TOKEN_BUCKET_TX_ENABLED
+    // Küçük batch: 16 paket per flush → kernel burst'ü sınırla
+    // 64 ile: 16 round birikir → 770μs burst on 1G
+    // 16 ile: 4 round birikir → 192μs burst on 1G (4x daha az)
+    const uint32_t BATCH_SIZE = 16;
+#else
     const uint32_t BATCH_SIZE = 64;  // Batch for kernel efficiency
-#if !TOKEN_BUCKET_TX_ENABLED
     const uint32_t MAX_CATCHUP_PER_TARGET = 64;  // Max packets per target per iteration
 #endif
     const uint64_t STATS_FLUSH_INTERVAL = 1024;    // Flush local stats every N packets (smaller = more accurate rate display)
