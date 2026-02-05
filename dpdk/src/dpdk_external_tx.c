@@ -348,11 +348,12 @@ int dpdk_ext_tx_worker(void *arg)
             now = rte_get_tsc_cycles();
         }
 
-        // ÖNEMLİ: Geride kalırsak CATCH-UP YAPMA (burst önleme)
-        // Sadece bir sonraki slot'a geç, kayıp paketleri telafi etme
+        // ÖNEMLİ: Geride kalırsak PHASE-PRESERVING SKIP (burst önleme)
+        // next_send_time = now yerine N * delay_cycles ile ilerle
+        // Bu sayede port'lar arası phase offset korunur
         if (next_send_time + delay_cycles < now) {
-            // Çok geride kaldık, şimdiden başla (paket kaybı kabul)
-            next_send_time = now;
+            uint64_t periods_behind = (now - next_send_time) / delay_cycles;
+            next_send_time += periods_behind * delay_cycles;
         }
         next_send_time += delay_cycles;
 
