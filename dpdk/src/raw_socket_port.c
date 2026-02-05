@@ -1116,10 +1116,20 @@ void *raw_tx_worker(void *arg)
 
     uint32_t batch_count = 0;
 #if TOKEN_BUCKET_TX_ENABLED
-    // Küçük batch: 16 paket per flush → kernel burst'ü sınırla
-    // 64 ile: 16 round birikir → 770μs burst on 1G
-    // 16 ile: 4 round birikir → 192μs burst on 1G (4x daha az)
-    const uint32_t BATCH_SIZE = 16;
+    // Dinamik batch: link hızına göre burst süresini sınırla
+    // Hedef: send() burst'ü max ~500μs wire time (switch buffer taşması önleme)
+    // Formula: max_pkts = (hedef_burst_us × link_mbps) / (pkt_bytes × 8)
+    //   1G:   (500 × 1000) / (1509 × 8) = 41 → cap 16 → 193μs burst (kısa)
+    //   100M: (500 × 100)  / (1509 × 8) = 4  → 4 pkts → 483μs burst (kısa)
+    // Neden önemli: Port 13 (100M) + BATCH=16 → 1930μs burst → P1/P7 switch buffer taşar
+    const uint32_t link_speed_mbps = port->config.is_1g_port ? 1000 : 100;
+    uint32_t dynamic_batch = (500 * link_speed_mbps) / (RAW_PKT_TOTAL_SIZE * 8);
+    if (dynamic_batch < 2) dynamic_batch = 2;
+    if (dynamic_batch > 16) dynamic_batch = 16;
+    const uint32_t BATCH_SIZE = dynamic_batch;
+    printf("[Port %u TX] Dynamic BATCH_SIZE=%u (link=%uMbps, burst=~%uus wire)\n",
+           port->port_id, BATCH_SIZE, link_speed_mbps,
+           (BATCH_SIZE * RAW_PKT_TOTAL_SIZE * 8) / link_speed_mbps);
 #else
     const uint32_t BATCH_SIZE = 64;  // Batch for kernel efficiency
     const uint32_t MAX_CATCHUP_PER_TARGET = 64;  // Max packets per target per iteration
