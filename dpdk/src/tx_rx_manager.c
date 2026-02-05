@@ -911,7 +911,13 @@ int tx_worker(void *arg)
     // Stagger: Her port/queue farklı zamanda başlar
     uint32_t stagger_slot = (params->port_id * 4 + params->queue_id) % 16;
     uint64_t stagger_offset = stagger_slot * (tsc_hz / 200);  // 5ms per slot
-    uint64_t next_send_time = rte_get_tsc_cycles() + stagger_offset;
+
+    // Per-queue phase offset: Queue'ları paket periyodu içinde eşit dağıt
+    // Stagger offset delay_cycles'ın tam katı olduğunda tüm queue'lar aynı fazda
+    // ateş ediyor (ör: 5ms / 14.286μs = 350.0 tam sayı → hepsi aynı anda).
+    // Bu fix ile her queue, periyodun 1/NUM_TX_CORES'lık dilimine kayar.
+    uint64_t queue_phase = params->queue_id * (delay_cycles / NUM_TX_CORES);
+    uint64_t next_send_time = rte_get_tsc_cycles() + stagger_offset + queue_phase;
 
     printf("TX Worker started: Port %u, Queue %u, Lcore %u, VLAN %u, VL_RANGE [%u..%u)\n",
            params->port_id, params->queue_id, params->lcore_id, params->vlan_id, vl_start, vl_end);
