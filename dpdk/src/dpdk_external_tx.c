@@ -302,7 +302,13 @@ int dpdk_ext_tx_worker(void *arg)
     // Stagger: Her port farklı zamanda başlar (switch buffer koruma)
     // Port 2=0ms, Port 3=50ms, Port 4=100ms, Port 5=150ms
     uint64_t stagger_offset = port_idx * (tsc_hz / 20);  // 50ms per port
-    uint64_t next_send_time = rte_get_tsc_cycles() + stagger_offset;
+
+    // Ext TX phase: Worker'ları paket periyodu içinde eşit dağıt
+    // Stagger offset delay_cycles'ın tam katı olduğunda tüm ext TX worker'lar
+    // aynı fazda ateş ediyor (ör: 50ms / 62.5μs = 800.0 tam sayı → hepsi aynı anda).
+    // Bu fix ile her worker, periyodun 1/DPDK_EXT_TX_PORT_COUNT'lık dilimine kayar.
+    uint64_t ext_phase = port_idx * (delay_cycles / DPDK_EXT_TX_PORT_COUNT);
+    uint64_t next_send_time = rte_get_tsc_cycles() + stagger_offset + ext_phase;
 
     printf("ExtTX Worker started: Port %u Q%u, %u targets, Rate %u Mbps\n",
            params->port_id, params->queue_id, target_count, params->rate_mbps);
