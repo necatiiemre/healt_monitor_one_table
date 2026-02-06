@@ -29,6 +29,7 @@
 #include <linux/ethtool.h>
 #include <arpa/inet.h>
 #include <linux/filter.h>
+#include <fcntl.h>
 
 // ============================================
 // GLOBAL STATE
@@ -204,6 +205,120 @@ static bool check_hw_ts_support(const char *ifname) {
            ifname, has_tx_hw, has_rx_hw, has_raw_hw, ts_info.phc_index);
 
     return has_tx_hw && has_rx_hw && has_raw_hw;
+}
+
+// Convert FD to clockid_t for clock_gettime (Linux kernel convention)
+#define FD_TO_CLOCKID(fd) ((clockid_t)((((unsigned int) ~(fd)) << 3) | 3))
+
+// Get PHC index for a given interface
+static int get_phc_index(const char *ifname) {
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) return -1;
+
+    struct ethtool_ts_info ts_info;
+    memset(&ts_info, 0, sizeof(ts_info));
+    ts_info.cmd = ETHTOOL_GET_TS_INFO;
+
+    struct ifreq ifr;
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ - 1);
+    ifr.ifr_data = (void *)&ts_info;
+
+    if (ioctl(sock, SIOCETHTOOL, &ifr) < 0) {
+        close(sock);
+        return -1;
+    }
+    close(sock);
+    return ts_info.phc_index;
+}
+
+// Compare PHC clocks across all NIC pairs used in tests
+static void debug_compare_phc_clocks(void) {
+    printf("\n[PHC_DEBUG] ========== PHC Clock Comparison ==========\n");
+
+    // Collect unique PHC indices and their interface names
+    struct { int phc_index; const char *iface; uint64_t phc_time; } phc_info[NUM_PORTS];
+    int phc_count = 0;
+
+    for (size_t i = 0; i < NUM_PORTS; i++) {
+        int idx = get_phc_index(PORT_INFO[i].iface);
+        printf("[PHC_DEBUG] %s (port %u) → /dev/ptp%d\n", PORT_INFO[i].iface, PORT_INFO[i].port_id, idx);
+
+        // Try to read PHC clock
+        char ptp_dev[32];
+        snprintf(ptp_dev, sizeof(ptp_dev), "/dev/ptp%d", idx);
+        int fd = open(ptp_dev, O_RDONLY);
+        if (fd >= 0) {
+            clockid_t clk = FD_TO_CLOCKID(fd);
+            struct timespec ts;
+            if (clock_gettime(clk, &ts) == 0) {
+                phc_info[phc_count].phc_index = idx;
+                phc_info[phc_count].iface = PORT_INFO[i].iface;
+                phc_info[phc_count].phc_time = (uint64_t)ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+                printf("[PHC_DEBUG]   PHC time = %lu ns  (sec=%lu.%09lu)\n",
+                       (unsigned long)phc_info[phc_count].phc_time,
+                       (unsigned long)ts.tv_sec, (unsigned long)ts.tv_nsec);
+                phc_count++;
+            } else {
+                printf("[PHC_DEBUG]   clock_gettime failed: %s\n", strerror(errno));
+            }
+            close(fd);
+        } else {
+            printf("[PHC_DEBUG]   Cannot open %s: %s\n", ptp_dev, strerror(errno));
+        }
+    }
+
+    // Also read system clock for reference
+    struct timespec sys_ts;
+    clock_gettime(CLOCK_REALTIME, &sys_ts);
+    uint64_t sys_ns = (uint64_t)sys_ts.tv_sec * 1000000000ULL + sys_ts.tv_nsec;
+    printf("[PHC_DEBUG] SYSTEM CLOCK = %lu ns  (sec=%lu.%09lu)\n",
+           (unsigned long)sys_ns, (unsigned long)sys_ts.tv_sec, (unsigned long)sys_ts.tv_nsec);
+
+    // Print cross-NIC offsets for loopback pairs
+    if (phc_count >= 2) {
+        printf("[PHC_DEBUG] --- Cross-NIC PHC offsets (loopback pairs) ---\n");
+        for (size_t p = 0; p < NUM_LOOPBACK_PAIRS && p < 4; p++) {
+            // Find PHC readings for TX and RX interfaces
+            uint64_t tx_phc = 0, rx_phc = 0;
+            const char *tx_if = LOOPBACK_PAIRS[p].tx_iface;
+            const char *rx_if = LOOPBACK_PAIRS[p].rx_iface;
+
+            for (int j = 0; j < phc_count; j++) {
+                if (strcmp(phc_info[j].iface, tx_if) == 0) tx_phc = phc_info[j].phc_time;
+                if (strcmp(phc_info[j].iface, rx_if) == 0) rx_phc = phc_info[j].phc_time;
+            }
+
+            if (tx_phc && rx_phc) {
+                int64_t offset = (int64_t)rx_phc - (int64_t)tx_phc;
+                printf("[PHC_DEBUG] Loopback %u→%u (%s→%s): PHC offset = %+.3f us\n",
+                       LOOPBACK_PAIRS[p].tx_port, LOOPBACK_PAIRS[p].rx_port,
+                       tx_if, rx_if, (double)offset / 1000.0);
+            }
+        }
+
+        // Also show unit test pair offsets (should be ~0 since same NIC)
+        printf("[PHC_DEBUG] --- Same-NIC PHC offsets (unit test pairs) ---\n");
+        for (size_t p = 0; p < NUM_UNIT_TEST_PAIRS && p < 4; p++) {
+            uint64_t tx_phc = 0, rx_phc = 0;
+            const char *tx_if = UNIT_TEST_PAIRS[p].tx_iface;
+            const char *rx_if = UNIT_TEST_PAIRS[p].rx_iface;
+
+            for (int j = 0; j < phc_count; j++) {
+                if (strcmp(phc_info[j].iface, tx_if) == 0) tx_phc = phc_info[j].phc_time;
+                if (strcmp(phc_info[j].iface, rx_if) == 0) rx_phc = phc_info[j].phc_time;
+            }
+
+            if (tx_phc && rx_phc) {
+                int64_t offset = (int64_t)rx_phc - (int64_t)tx_phc;
+                printf("[PHC_DEBUG] Unit %u→%u (%s→%s): PHC offset = %+.3f us\n",
+                       UNIT_TEST_PAIRS[p].tx_port, UNIT_TEST_PAIRS[p].rx_port,
+                       tx_if, rx_if, (double)offset / 1000.0);
+            }
+        }
+    }
+
+    printf("[PHC_DEBUG] ================================================\n\n");
 }
 
 // Drain stale packets from RX socket buffer
@@ -488,7 +603,10 @@ static bool is_our_test_packet(const uint8_t *pkt, size_t len, uint16_t expected
 #define SCM_TIMESTAMPING SO_TIMESTAMPING
 #endif
 
-static bool extract_timestamp(struct msghdr *msg, uint64_t *ts_ns) {
+// Timestamp source tracking
+typedef enum { TS_NONE = 0, TS_HW = 1, TS_SW = 2 } ts_source_t;
+
+static bool extract_timestamp_debug(struct msghdr *msg, uint64_t *ts_ns, ts_source_t *source) {
     struct cmsghdr *cmsg;
 
     for (cmsg = CMSG_FIRSTHDR(msg); cmsg; cmsg = CMSG_NXTHDR(msg, cmsg)) {
@@ -499,6 +617,7 @@ static bool extract_timestamp(struct msghdr *msg, uint64_t *ts_ns) {
             // Hardware timestamp preferred
             if (ts[2].tv_sec != 0 || ts[2].tv_nsec != 0) {
                 *ts_ns = (uint64_t)ts[2].tv_sec * 1000000000ULL + ts[2].tv_nsec;
+                if (source) *source = TS_HW;
                 return true;
             }
             // Software timestamp fallback - WARN user!
@@ -506,11 +625,17 @@ static bool extract_timestamp(struct msghdr *msg, uint64_t *ts_ns) {
                 *ts_ns = (uint64_t)ts[0].tv_sec * 1000000000ULL + ts[0].tv_nsec;
                 fprintf(stderr, "[WARN] Using SOFTWARE timestamp (HW not available!) - latency will be ~10us higher!\n");
                 g_using_hw_timestamps = false;
+                if (source) *source = TS_SW;
                 return true;
             }
         }
     }
+    if (source) *source = TS_NONE;
     return false;
+}
+
+static bool extract_timestamp(struct msghdr *msg, uint64_t *ts_ns) {
+    return extract_timestamp_debug(msg, ts_ns, NULL);
 }
 
 // ============================================
@@ -602,6 +727,7 @@ static int run_single_test(int tx_fd, int rx_fd, int tx_ifindex,
 
         // Get TX timestamp from error queue (separate buffer from RX!)
         uint64_t tx_ts = 0;
+        ts_source_t tx_src = TS_NONE;
         struct pollfd pfd = {tx_fd, POLLERR, 0};
         if (poll(&pfd, 1, 100) > 0) {
             struct msghdr msg = {0};
@@ -614,7 +740,7 @@ static int run_single_test(int tx_fd, int rx_fd, int tx_ifindex,
             if (recvmsg(tx_fd, &msg, MSG_ERRQUEUE) < 0) {
                 fprintf(stderr, "[WARN] TX timestamp recvmsg failed: %s\n", strerror(errno));
             } else {
-                if (!extract_timestamp(&msg, &tx_ts)) {
+                if (!extract_timestamp_debug(&msg, &tx_ts, &tx_src)) {
                     fprintf(stderr, "[WARN] No TX timestamp in error queue message\n");
                 }
             }
@@ -657,11 +783,34 @@ static int run_single_test(int tx_fd, int rx_fd, int tx_ifindex,
                         }
 
                         uint64_t rx_ts = 0;
-                        extract_timestamp(&msg, &rx_ts);
+                        ts_source_t rx_src = TS_NONE;
+                        extract_timestamp_debug(&msg, &rx_ts, &rx_src);
 
                         if (rx_ts > 0 && tx_ts > 0 && rx_ts > tx_ts) {
                             uint64_t latency = rx_ts - tx_ts;
                             total_latency += latency;
+
+                            // Debug: print raw timestamps for first packet of each VLAN
+                            if (pkt == 0) {
+                                const char *tx_label = (tx_src == TS_HW) ? "HW" : (tx_src == TS_SW) ? "SW" : "??";
+                                const char *rx_label = (rx_src == TS_HW) ? "HW" : (rx_src == TS_SW) ? "SW" : "??";
+                                printf("  [DEBUG] VLAN %u Port %u→%u pkt#0:\n",
+                                       vlan_id, tx_port, rx_port);
+                                printf("    TX_raw = %lu ns [%s]  (sec=%lu)\n",
+                                       (unsigned long)tx_ts, tx_label, (unsigned long)(tx_ts / 1000000000ULL));
+                                printf("    RX_raw = %lu ns [%s]  (sec=%lu)\n",
+                                       (unsigned long)rx_ts, rx_label, (unsigned long)(rx_ts / 1000000000ULL));
+                                printf("    diff   = %lu ns = %.2f us\n",
+                                       (unsigned long)latency, (double)latency / 1000.0);
+                                // Compare with system clock for reference
+                                struct timespec sys_ts;
+                                clock_gettime(CLOCK_REALTIME, &sys_ts);
+                                uint64_t sys_ns = (uint64_t)sys_ts.tv_sec * 1000000000ULL + sys_ts.tv_nsec;
+                                printf("    SYS_clock = %lu ns  (sec=%lu)\n",
+                                       (unsigned long)sys_ns, (unsigned long)sys_ts.tv_sec);
+                                printf("    TX vs SYS offset = %.3f ms\n",
+                                       (double)((int64_t)tx_ts - (int64_t)sys_ns) / 1000000.0);
+                            }
 
                             if (latency < result->min_latency_ns)
                                 result->min_latency_ns = latency;
@@ -1103,6 +1252,9 @@ int emb_latency_full_sequence(void) {
 
     // Reset state
     memset(&g_emb_latency, 0, sizeof(g_emb_latency));
+
+    // Debug: Compare PHC clocks across NICs before starting
+    debug_compare_phc_clocks();
 
     // ==========================================
     // STEP 1: Loopback Test (OPTIONAL)
