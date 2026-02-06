@@ -289,15 +289,20 @@ bool raw_check_smooth_pacing(struct raw_rate_limiter *limiter)
         return false;
     }
 
+#if TOKEN_BUCKET_TX_ENABLED
     // If we're too far behind, skip forward by whole delay periods
     // Phase-preserving: next_send_time advances by multiples of delay_ns
     // so the original phase offset between targets is maintained.
-    // Old: next_send_time = now (destroys phase → all targets fire simultaneously)
-    // New: next_send_time += N * delay_ns (preserves phase → targets stay staggered)
     if (limiter->next_send_time_ns + limiter->max_catchup_ns < now) {
         uint64_t periods_behind = (now - limiter->next_send_time_ns) / limiter->delay_ns;
         limiter->next_send_time_ns += periods_behind * limiter->delay_ns;
     }
+#else
+    // If we're too far behind (>10ms), reset to now (prevents large burst)
+    if (limiter->next_send_time_ns + 10000000ULL < now) {
+        limiter->next_send_time_ns = now;
+    }
+#endif
 
     // Schedule next packet
     limiter->next_send_time_ns += limiter->delay_ns;
@@ -1094,6 +1099,7 @@ void *raw_tx_worker(void *arg)
                target->config.dest_port);
     }
 
+#if TOKEN_BUCKET_TX_ENABLED
     // Startup timing reset + base delay:
     // 1) next_send_time limiter init sırasında ayarlandı ama thread çok sonra başlıyor
     // 2) 200ms base delay: DPDK TX ve ext TX tamamen stabilize olsun
@@ -1113,6 +1119,7 @@ void *raw_tx_worker(void *arg)
         printf("[Port %u TX] Timing reset (base=%lu, startup_delay=200ms)\n",
                port->port_id, tx_start_ns);
     }
+#endif
 
     uint32_t batch_count = 0;
 #if TOKEN_BUCKET_TX_ENABLED
@@ -1503,6 +1510,7 @@ void *raw_rx_worker(void *arg)
                         dpdk_ext_expected_seq_p12[vl_idx] = seq + 1;
                         dpdk_ext_seq_initialized_p12[vl_idx] = true;
                     } else {
+#if TOKEN_BUCKET_TX_ENABLED
                         // Multi-queue NOT: Port 12 RX has 4 queues (Q0-Q3).
                         // NIC RSS distributes same VL-ID across queues → OOO.
                         // Gap detection burada false positive verir.
@@ -1510,6 +1518,13 @@ void *raw_rx_worker(void *arg)
                         if (seq >= dpdk_ext_expected_seq_p12[vl_idx]) {
                             dpdk_ext_expected_seq_p12[vl_idx] = seq + 1;
                         }
+#else
+                        uint64_t expected = dpdk_ext_expected_seq_p12[vl_idx];
+                        if (seq > expected) {
+                            local_dpdk_lost += (seq - expected);
+                        }
+                        dpdk_ext_expected_seq_p12[vl_idx] = seq + 1;
+#endif
                     }
                 }
             } else if (port->port_id == 13) {
@@ -1520,12 +1535,20 @@ void *raw_rx_worker(void *arg)
                         dpdk_ext_expected_seq_p13[vl_idx] = seq + 1;
                         dpdk_ext_seq_initialized_p13[vl_idx] = true;
                     } else {
+#if TOKEN_BUCKET_TX_ENABLED
                         // Multi-queue NOT: Port 13 RX has 2 queues.
                         // Gap detection multi-queue OOO'da false positive verir.
                         // Kayıp tespiti watermark-based (g_vl_seq) ile yapılır.
                         if (seq >= dpdk_ext_expected_seq_p13[vl_idx]) {
                             dpdk_ext_expected_seq_p13[vl_idx] = seq + 1;
                         }
+#else
+                        uint64_t expected = dpdk_ext_expected_seq_p13[vl_idx];
+                        if (seq > expected) {
+                            local_dpdk_lost += (seq - expected);
+                        }
+                        dpdk_ext_expected_seq_p13[vl_idx] = seq + 1;
+#endif
                     }
                 }
             }

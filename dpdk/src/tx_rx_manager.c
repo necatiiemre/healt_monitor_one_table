@@ -912,16 +912,18 @@ int tx_worker(void *arg)
     uint32_t stagger_slot = (params->port_id * 4 + params->queue_id) % 16;
     uint64_t stagger_offset = stagger_slot * (tsc_hz / 200);  // 5ms per slot
 
+#if TOKEN_BUCKET_TX_ENABLED
     // Global worker phase: Tüm TX worker'ları paket periyodu içinde eşit dağıt
     // Stagger offset delay_cycles'ın tam katı olduğunda tüm worker'lar aynı fazda
     // ateş ediyor (ör: 5ms / 14.286μs = 350.0 tam sayı → 32 paket aynı anda!).
     // Bu fix ile her worker, periyodun 1/total_workers'lık dilimine kayar.
-    // Örnek (8 port × 4 queue = 32 worker, 14.286μs periyot):
-    //   Worker 0: +0.000μs, Worker 1: +0.446μs, ... Worker 31: +13.84μs
     uint32_t total_workers = params->nb_ports * NUM_TX_CORES;
     uint32_t worker_idx = params->port_id * NUM_TX_CORES + params->queue_id;
     uint64_t global_phase = worker_idx * (delay_cycles / total_workers);
     uint64_t next_send_time = rte_get_tsc_cycles() + stagger_offset + global_phase;
+#else
+    uint64_t next_send_time = rte_get_tsc_cycles() + stagger_offset;
+#endif
 
     printf("TX Worker started: Port %u, Queue %u, Lcore %u, VLAN %u, VL_RANGE [%u..%u)\n",
            params->port_id, params->queue_id, params->lcore_id, params->vlan_id, vl_start, vl_end);
@@ -986,6 +988,7 @@ int tx_worker(void *arg)
             now = rte_get_tsc_cycles();
         }
 
+#if TOKEN_BUCKET_TX_ENABLED
         // Geride kalırsak PHASE-PRESERVING SKIP (burst önleme)
         // next_send_time = now yerine N * delay_cycles ile ilerle
         // Bu sayede worker'lar arası phase offset korunur
@@ -993,6 +996,12 @@ int tx_worker(void *arg)
             uint64_t periods_behind = (now - next_send_time) / delay_cycles;
             next_send_time += periods_behind * delay_cycles;
         }
+#else
+        // Geride kalırsak CATCH-UP YAPMA (burst önleme)
+        if (next_send_time + delay_cycles < now) {
+            next_send_time = now;
+        }
+#endif
         next_send_time += delay_cycles;
 
         // Tek paket tahsisi
@@ -1369,18 +1378,32 @@ int rx_worker(void *arg)
                                                                 &expected_init, 1,
                                                                 false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
                                 {
+#if TOKEN_BUCKET_TX_ENABLED
                                     __atomic_store_n(&raw_seq_tracker->min_seq, raw_seq, __ATOMIC_RELEASE);
+#endif
                                     __atomic_store_n(&raw_seq_tracker->expected_seq, raw_seq + 1, __ATOMIC_RELEASE);
                                 }
                             }
                             else
                             {
+#if TOKEN_BUCKET_TX_ENABLED
                                 // Multi-queue NOT: Raw socket paketler VLAN tag'sız geldiği için
                                 // NIC RSS onları farklı RX queue'lara dağıtabilir. Bu durumda
                                 // Q1 daha yüksek seq'i Q0'dan önce işleyebilir → false positive gap.
                                 // Bu yüzden real-time gap detection KULLANILMAZ.
                                 // Kayıp tespiti watermark-based (max_seq+1 - pkt_count) ile yapılır
-                                // çünkü pkt_count ve max_seq atomic CAS ile güvenli.
+#else
+                                // Real-time gap detection
+                                uint64_t expected = __atomic_load_n(&raw_seq_tracker->expected_seq, __ATOMIC_ACQUIRE);
+                                if (raw_seq > expected)
+                                {
+                                    local_lost += (raw_seq - expected);
+                                }
+                                if (raw_seq >= expected)
+                                {
+                                    __atomic_store_n(&raw_seq_tracker->expected_seq, raw_seq + 1, __ATOMIC_RELEASE);
+                                }
+#endif
                             }
 
                             // Update max_seq if this sequence is higher
@@ -1505,16 +1528,31 @@ int rx_worker(void *arg)
                                                                 &expected_init, 1,
                                                                 false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
                                 {
+#if TOKEN_BUCKET_TX_ENABLED
                                     __atomic_store_n(&ext_seq_tracker->min_seq, ext_seq, __ATOMIC_RELEASE);
+#endif
                                     __atomic_store_n(&ext_seq_tracker->expected_seq, ext_seq + 1, __ATOMIC_RELEASE);
                                 }
                             }
                             else
                             {
+#if TOKEN_BUCKET_TX_ENABLED
                                 // Multi-queue NOT: External/raw socket paketler VLAN tag'sız
                                 // geldiği için NIC RSS onları farklı RX queue'lara dağıtabilir.
                                 // Gap detection (expected_seq) multi-queue OOO'da false positive verir.
                                 // Kayıp tespiti watermark-based (max_seq+1 - pkt_count) ile yapılır.
+#else
+                                // Real-time gap detection
+                                uint64_t expected = __atomic_load_n(&ext_seq_tracker->expected_seq, __ATOMIC_ACQUIRE);
+                                if (ext_seq > expected)
+                                {
+                                    local_lost += (ext_seq - expected);
+                                }
+                                if (ext_seq >= expected)
+                                {
+                                    __atomic_store_n(&ext_seq_tracker->expected_seq, ext_seq + 1, __ATOMIC_RELEASE);
+                                }
+#endif
                             }
 
                             // Update max_seq if this sequence is higher (CAS loop)
@@ -1558,8 +1596,10 @@ int rx_worker(void *arg)
                                                         &expected_init, 1,
                                                         false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
                         {
-                            // We won the race - initialize expected_seq and min_seq
+                            // We won the race - initialize expected_seq
+#if TOKEN_BUCKET_TX_ENABLED
                             __atomic_store_n(&seq_tracker->min_seq, seq, __ATOMIC_RELEASE);
+#endif
                             __atomic_store_n(&seq_tracker->expected_seq, seq + 1, __ATOMIC_RELEASE);
                         }
                     }
@@ -1571,8 +1611,10 @@ int rx_worker(void *arg)
                         {
                             // Gap detected - packets lost
                             local_lost += (seq - expected);
+#if TOKEN_BUCKET_TX_ENABLED
                             printf("*** LOSS DETECTED [DPDK] Port %u Q%u: VL-ID=%u expected_seq=%lu got_seq=%lu gap=%lu (src_port=%u) ***\n",
                                    params->port_id, params->queue_id, vl_id, expected, seq, seq - expected, params->src_port_id);
+#endif
                         }
                         // Update expected_seq (even if seq < expected, move forward)
                         if (seq >= expected)
@@ -1732,12 +1774,18 @@ int rx_worker(void *arg)
             if (__atomic_load_n(&seq_tracker->initialized, __ATOMIC_ACQUIRE))
             {
                 uint64_t max_seq = __atomic_load_n(&seq_tracker->max_seq, __ATOMIC_ACQUIRE);
-                uint64_t min_seq = __atomic_load_n(&seq_tracker->min_seq, __ATOMIC_ACQUIRE);
                 uint64_t pkt_count = __atomic_load_n(&seq_tracker->pkt_count, __ATOMIC_ACQUIRE);
 
+#if TOKEN_BUCKET_TX_ENABLED
                 // Lost = expected total (max_seq - min_seq + 1) - actual received
                 // min_seq handles sequences that don't start from 0 (e.g., after restart)
+                uint64_t min_seq = __atomic_load_n(&seq_tracker->min_seq, __ATOMIC_ACQUIRE);
                 uint64_t expected_count = max_seq - min_seq + 1;
+#else
+                // Lost = expected total (max_seq + 1) - actual received
+                // Assuming sequences start from 0
+                uint64_t expected_count = max_seq + 1;
+#endif
                 if (expected_count > pkt_count)
                 {
                     total_lost += (expected_count - pkt_count);
@@ -1885,7 +1933,9 @@ int start_txrx_workers(struct ports_config *ports_config, volatile bool *stop_fl
             tx_params[tx_param_idx].lcore_id = lcore_id;
             tx_params[tx_param_idx].vlan_id = tx_vlan;
             tx_params[tx_param_idx].stop_flag = stop_flag;
+#if TOKEN_BUCKET_TX_ENABLED
             tx_params[tx_param_idx].nb_ports = ports_config->nb_ports;
+#endif
 
             char pool_name[32];
             snprintf(pool_name, sizeof(pool_name), "mbuf_pool_%u_%u",

@@ -303,12 +303,16 @@ int dpdk_ext_tx_worker(void *arg)
     // Port 2=0ms, Port 3=50ms, Port 4=100ms, Port 5=150ms
     uint64_t stagger_offset = port_idx * (tsc_hz / 20);  // 50ms per port
 
+#if TOKEN_BUCKET_TX_ENABLED
     // Ext TX phase: Worker'ları paket periyodu içinde eşit dağıt
     // Stagger offset delay_cycles'ın tam katı olduğunda tüm ext TX worker'lar
     // aynı fazda ateş ediyor (ör: 50ms / 62.5μs = 800.0 tam sayı → hepsi aynı anda).
     // Bu fix ile her worker, periyodun 1/DPDK_EXT_TX_PORT_COUNT'lık dilimine kayar.
     uint64_t ext_phase = port_idx * (delay_cycles / DPDK_EXT_TX_PORT_COUNT);
     uint64_t next_send_time = rte_get_tsc_cycles() + stagger_offset + ext_phase;
+#else
+    uint64_t next_send_time = rte_get_tsc_cycles() + stagger_offset;
+#endif
 
     printf("ExtTX Worker started: Port %u Q%u, %u targets, Rate %u Mbps\n",
            params->port_id, params->queue_id, target_count, params->rate_mbps);
@@ -348,6 +352,7 @@ int dpdk_ext_tx_worker(void *arg)
             now = rte_get_tsc_cycles();
         }
 
+#if TOKEN_BUCKET_TX_ENABLED
         // ÖNEMLİ: Geride kalırsak PHASE-PRESERVING SKIP (burst önleme)
         // next_send_time = now yerine N * delay_cycles ile ilerle
         // Bu sayede port'lar arası phase offset korunur
@@ -355,6 +360,12 @@ int dpdk_ext_tx_worker(void *arg)
             uint64_t periods_behind = (now - next_send_time) / delay_cycles;
             next_send_time += periods_behind * delay_cycles;
         }
+#else
+        // Geride kalırsak şimdiden başla (paket kaybı kabul)
+        if (next_send_time + delay_cycles < now) {
+            next_send_time = now;
+        }
+#endif
         next_send_time += delay_cycles;
 
         // Paket tahsisi - BAŞARISIZ OLURSA BİLE TIMING KORUNUR
