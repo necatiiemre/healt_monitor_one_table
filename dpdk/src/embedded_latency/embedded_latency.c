@@ -28,12 +28,14 @@
 #include <linux/sockios.h>
 #include <linux/ethtool.h>
 #include <arpa/inet.h>
+#include <linux/filter.h>
 
 // ============================================
 // GLOBAL STATE
 // ============================================
 struct emb_latency_state g_emb_latency = {0};
 bool g_ate_mode = false;
+static bool g_using_hw_timestamps = true;  // Track if HW timestamps are actually used
 
 // ============================================
 // USER INTERACTION
@@ -165,6 +167,81 @@ static double ns_to_us(uint64_t ns) {
     return (double)ns / 1000.0;
 }
 
+// Precise busy-wait delay (replaces inaccurate usleep for µs delays)
+static void precise_busy_wait_us(uint32_t us) {
+    uint64_t start = get_time_ns();
+    uint64_t target = (uint64_t)us * 1000ULL;
+    while ((get_time_ns() - start) < target) {
+        __asm__ volatile("pause" ::: "memory");
+    }
+}
+
+// Check HW timestamp support via ethtool
+static bool check_hw_ts_support(const char *ifname) {
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) return false;
+
+    struct ethtool_ts_info ts_info;
+    memset(&ts_info, 0, sizeof(ts_info));
+    ts_info.cmd = ETHTOOL_GET_TS_INFO;
+
+    struct ifreq ifr;
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ - 1);
+    ifr.ifr_data = (void *)&ts_info;
+
+    if (ioctl(sock, SIOCETHTOOL, &ifr) < 0) {
+        close(sock);
+        return false;
+    }
+    close(sock);
+
+    bool has_tx_hw = (ts_info.so_timestamping & SOF_TIMESTAMPING_TX_HARDWARE) != 0;
+    bool has_rx_hw = (ts_info.so_timestamping & SOF_TIMESTAMPING_RX_HARDWARE) != 0;
+    bool has_raw_hw = (ts_info.so_timestamping & SOF_TIMESTAMPING_RAW_HARDWARE) != 0;
+
+    printf("[HW_TS] %s: TX_HW=%d RX_HW=%d RAW_HW=%d PHC=%d\n",
+           ifname, has_tx_hw, has_rx_hw, has_raw_hw, ts_info.phc_index);
+
+    return has_tx_hw && has_rx_hw && has_raw_hw;
+}
+
+// Drain stale packets from RX socket buffer
+static void drain_rx_buffer(int fd) {
+    struct pollfd pfd = {fd, POLLIN, 0};
+    uint8_t discard[2048];
+    int drained = 0;
+
+    while (poll(&pfd, 1, 0) > 0) {  // Non-blocking poll
+        if (recv(fd, discard, sizeof(discard), MSG_DONTWAIT) <= 0)
+            break;
+        drained++;
+        if (drained > 1000) break;  // Safety limit
+    }
+    if (drained > 0) {
+        printf("[INFO] Drained %d stale packets from RX buffer\n", drained);
+    }
+}
+
+// Extract sequence number from test packet
+static uint64_t extract_sequence(const uint8_t *pkt, size_t len) {
+    // Determine payload offset based on VLAN presence
+    uint16_t etype = ((uint16_t)pkt[12] << 8) | pkt[13];
+    size_t offset;
+    if (etype == ETH_P_8021Q) {
+        offset = 14 + 4 + 20 + 8;  // ETH + VLAN + IP + UDP = 46
+    } else {
+        offset = 14 + 20 + 8;      // ETH + IP + UDP = 42 (untagged)
+    }
+    if (len < offset + 8) return 0;
+
+    uint64_t seq = 0;
+    for (int i = 0; i < 8; i++) {
+        seq = (seq << 8) | pkt[offset + i];
+    }
+    return seq;
+}
+
 // ============================================
 // HW TIMESTAMP SOCKET
 // ============================================
@@ -212,9 +289,36 @@ static int create_raw_socket(const char *ifname, int *if_index, emb_sock_type_t 
         mreq.mr_ifindex = *if_index;
         mreq.mr_type = PACKET_MR_PROMISC;
         setsockopt(fd, SOL_PACKET, PACKET_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
+
+        // BPF filter: only accept packets with DST MAC prefix 03:00:00:00
+        // This filters at kernel level, avoiding unnecessary packet processing
+        struct sock_filter bpf_code[] = {
+            // Load byte at offset 0 (first byte of DST MAC)
+            { BPF_LD | BPF_B | BPF_ABS, 0, 0, 0 },
+            // Jump if == 0x03, else reject
+            { BPF_JMP | BPF_JEQ | BPF_K, 0, 3, 0x03 },
+            // Load halfword at offset 2 (bytes 2-3 of DST MAC: should be 0x0000)
+            { BPF_LD | BPF_H | BPF_ABS, 0, 0, 2 },
+            // Jump if == 0x0000, else reject
+            { BPF_JMP | BPF_JEQ | BPF_K, 0, 1, 0x0000 },
+            // Accept: return max packet length
+            { BPF_RET | BPF_K, 0, 0, 0xFFFFFFFF },
+            // Reject: return 0
+            { BPF_RET | BPF_K, 0, 0, 0 },
+        };
+
+        struct sock_fprog bpf_prog = {
+            .len = sizeof(bpf_code) / sizeof(bpf_code[0]),
+            .filter = bpf_code,
+        };
+
+        if (setsockopt(fd, SOL_SOCKET, SO_ATTACH_FILTER, &bpf_prog, sizeof(bpf_prog)) < 0) {
+            fprintf(stderr, "[WARN] BPF filter attach failed for %s: %s (continuing without filter)\n",
+                    ifname, strerror(errno));
+        }
     }
 
-    // Enable HW timestamping on NIC
+    // Enable HW timestamping on NIC (SIOCSHWTSTAMP)
     struct hwtstamp_config hwconfig = {0};
     hwconfig.tx_type = (type == EMB_SOCK_TX) ? HWTSTAMP_TX_ON : HWTSTAMP_TX_OFF;
     hwconfig.rx_filter = (type == EMB_SOCK_RX) ? HWTSTAMP_FILTER_ALL : HWTSTAMP_FILTER_NONE;
@@ -222,12 +326,18 @@ static int create_raw_socket(const char *ifname, int *if_index, emb_sock_type_t 
     memset(&ifr, 0, sizeof(ifr));
     strncpy(ifr.ifr_name, ifname, IFNAMSIZ - 1);
     ifr.ifr_data = (void *)&hwconfig;
-    ioctl(fd, SIOCSHWTSTAMP, &ifr);  // May fail on some NICs, continue anyway
+
+    if (ioctl(fd, SIOCSHWTSTAMP, &ifr) < 0) {
+        fprintf(stderr, "[WARN] SIOCSHWTSTAMP failed for %s: %s\n", ifname, strerror(errno));
+        fprintf(stderr, "[WARN] HW timestamps may not work - results could use SW timestamps!\n");
+        g_using_hw_timestamps = false;
+    }
 
     // Request timestamps via socket option
     int flags = SOF_TIMESTAMPING_RAW_HARDWARE;
     if (type == EMB_SOCK_TX) {
         flags |= SOF_TIMESTAMPING_TX_HARDWARE;
+        flags |= SOF_TIMESTAMPING_OPT_TSONLY;  // Only timestamp, don't echo 1518B packet back
     } else {
         flags |= SOF_TIMESTAMPING_RX_HARDWARE;
     }
@@ -391,9 +501,11 @@ static bool extract_timestamp(struct msghdr *msg, uint64_t *ts_ns) {
                 *ts_ns = (uint64_t)ts[2].tv_sec * 1000000000ULL + ts[2].tv_nsec;
                 return true;
             }
-            // Software timestamp fallback
+            // Software timestamp fallback - WARN user!
             if (ts[0].tv_sec != 0 || ts[0].tv_nsec != 0) {
                 *ts_ns = (uint64_t)ts[0].tv_sec * 1000000000ULL + ts[0].tv_nsec;
+                fprintf(stderr, "[WARN] Using SOFTWARE timestamp (HW not available!) - latency will be ~10us higher!\n");
+                g_using_hw_timestamps = false;
                 return true;
             }
         }
@@ -421,10 +533,52 @@ static int run_single_test(int tx_fd, int rx_fd, int tx_ifindex,
 
     uint8_t tx_buf[2048];
     uint8_t rx_buf[2048];
-    char ctrl_buf[1024];
+    // Separate control buffers for TX and RX (prevents data corruption)
+    char tx_ctrl_buf[1024];
+    char rx_ctrl_buf[1024];
+    // Separate dummy buffer for TX timestamp retrieval (OPT_TSONLY gives minimal data)
+    uint8_t tx_ts_buf[64];
 
     uint64_t total_latency = 0;
 
+    // --- WARM-UP: Send 2 packets to prime NIC TX/RX pipeline ---
+    #define WARMUP_COUNT 2
+    for (int w = 0; w < WARMUP_COUNT; w++) {
+        uint64_t warmup_seq = ((uint64_t)vlan_id << 32) | 0xFFFF0000UL | w;
+        int pkt_len = build_packet(tx_buf, vlan_id, vl_id, warmup_seq);
+
+        struct sockaddr_ll sll = {0};
+        sll.sll_family = AF_PACKET;
+        sll.sll_ifindex = tx_ifindex;
+        sll.sll_halen = 6;
+        memcpy(sll.sll_addr, tx_buf, 6);
+
+        sendto(tx_fd, tx_buf, pkt_len, 0, (struct sockaddr *)&sll, sizeof(sll));
+
+        // Consume TX timestamp from error queue
+        struct pollfd wpfd = {tx_fd, POLLERR, 0};
+        if (poll(&wpfd, 1, 50) > 0) {
+            struct msghdr wmsg = {0};
+            struct iovec wiov = {tx_ts_buf, sizeof(tx_ts_buf)};
+            wmsg.msg_iov = &wiov;
+            wmsg.msg_iovlen = 1;
+            wmsg.msg_control = tx_ctrl_buf;
+            wmsg.msg_controllen = sizeof(tx_ctrl_buf);
+            recvmsg(tx_fd, &wmsg, MSG_ERRQUEUE);
+        }
+
+        // Wait and discard RX warm-up packet
+        struct pollfd wrpfd = {rx_fd, POLLIN, 0};
+        if (poll(&wrpfd, 1, 50) > 0) {
+            recv(rx_fd, rx_buf, sizeof(rx_buf), MSG_DONTWAIT);
+        }
+
+        precise_busy_wait_us(10);  // Small delay between warm-ups
+    }
+    // Drain any remaining warm-up packets from RX buffer
+    drain_rx_buffer(rx_fd);
+
+    // --- MEASUREMENT PACKETS ---
     for (int pkt = 0; pkt < packet_count; pkt++) {
         uint64_t seq = ((uint64_t)vlan_id << 32) | pkt;
 
@@ -446,40 +600,62 @@ static int run_single_test(int tx_fd, int rx_fd, int tx_ifindex,
         }
         result->tx_count++;
 
-        // Get TX timestamp from error queue
+        // Get TX timestamp from error queue (separate buffer from RX!)
         uint64_t tx_ts = 0;
         struct pollfd pfd = {tx_fd, POLLERR, 0};
         if (poll(&pfd, 1, 100) > 0) {
             struct msghdr msg = {0};
-            struct iovec iov = {rx_buf, sizeof(rx_buf)};
+            struct iovec iov = {tx_ts_buf, sizeof(tx_ts_buf)};  // Separate small buffer
             msg.msg_iov = &iov;
             msg.msg_iovlen = 1;
-            msg.msg_control = ctrl_buf;
-            msg.msg_controllen = sizeof(ctrl_buf);
+            msg.msg_control = tx_ctrl_buf;  // Separate control buffer
+            msg.msg_controllen = sizeof(tx_ctrl_buf);
 
-            recvmsg(tx_fd, &msg, MSG_ERRQUEUE);
-            extract_timestamp(&msg, &tx_ts);
+            if (recvmsg(tx_fd, &msg, MSG_ERRQUEUE) < 0) {
+                fprintf(stderr, "[WARN] TX timestamp recvmsg failed: %s\n", strerror(errno));
+            } else {
+                if (!extract_timestamp(&msg, &tx_ts)) {
+                    fprintf(stderr, "[WARN] No TX timestamp in error queue message\n");
+                }
+            }
+        } else {
+            fprintf(stderr, "[WARN] TX timestamp poll timeout for VLAN %u pkt %d\n", vlan_id, pkt);
         }
 
-        // Wait for RX
-        struct pollfd rx_pfd = {rx_fd, POLLIN, 0};
-        int remaining = timeout_ms;
+        // Wait for RX - use real time-based timeout
+        uint64_t rx_start = get_time_ns();
+        uint64_t rx_deadline = rx_start + (uint64_t)timeout_ms * 1000000ULL;
         bool received = false;
 
-        while (remaining > 0 && !received) {
-            int ret = poll(&rx_pfd, 1, remaining < 100 ? remaining : 100);
+        while (!received) {
+            uint64_t now = get_time_ns();
+            if (now >= rx_deadline) break;
+
+            int remaining_ms = (int)((rx_deadline - now) / 1000000ULL);
+            if (remaining_ms <= 0) break;
+            int poll_timeout = remaining_ms < 100 ? remaining_ms : 100;
+
+            struct pollfd rx_pfd = {rx_fd, POLLIN, 0};
+            int ret = poll(&rx_pfd, 1, poll_timeout);
             if (ret > 0) {
                 struct msghdr msg = {0};
-                struct iovec iov = {rx_buf, sizeof(rx_buf)};
+                struct iovec iov = {rx_buf, sizeof(rx_buf)};  // Separate RX buffer
                 msg.msg_iov = &iov;
                 msg.msg_iovlen = 1;
-                msg.msg_control = ctrl_buf;
-                msg.msg_controllen = sizeof(ctrl_buf);
+                msg.msg_control = rx_ctrl_buf;  // Separate control buffer
+                msg.msg_controllen = sizeof(rx_ctrl_buf);
 
                 ssize_t len = recvmsg(rx_fd, &msg, 0);
                 if (len > 0) {
                     // Check if this is our test packet (handles VLAN stripped case)
                     if (is_our_test_packet(rx_buf, len, vlan_id, vl_id)) {
+                        // Verify sequence number match
+                        uint64_t rx_seq = extract_sequence(rx_buf, len);
+                        if (rx_seq != seq) {
+                            // Wrong sequence - stale or out-of-order packet, skip
+                            continue;
+                        }
+
                         uint64_t rx_ts = 0;
                         extract_timestamp(&msg, &rx_ts);
 
@@ -494,11 +670,13 @@ static int run_single_test(int tx_fd, int rx_fd, int tx_ifindex,
 
                             result->rx_count++;
                             received = true;
+                        } else if (tx_ts == 0) {
+                            fprintf(stderr, "[WARN] VLAN %u pkt %d: TX timestamp missing\n",
+                                    vlan_id, pkt);
                         }
                     }
                 }
             }
-            remaining -= 100;
         }
     }
 
@@ -558,8 +736,9 @@ int emb_latency_run(int packet_count, int timeout_ms, int max_latency_us) {
             continue;
         }
 
-        // Wait for sockets to fully initialize (critical for first packet!)
+        // Wait for sockets to initialize, then drain stale packets
         usleep(10000);  // 10ms
+        drain_rx_buffer(rx_fd);
 
         // Test each VLAN
         for (int v = 0; v < PORT_PAIRS[p].vlan_count; v++) {
@@ -577,8 +756,8 @@ int emb_latency_run(int packet_count, int timeout_ms, int max_latency_us) {
             }
             result_idx++;
 
-            // Inter-VLAN delay
-            usleep(32);
+            // Inter-VLAN delay (precise busy-wait instead of inaccurate usleep)
+            precise_busy_wait_us(32);
         }
 
         close(tx_fd);
@@ -666,8 +845,17 @@ int emb_latency_run_loopback(int packet_count, int timeout_ms, int max_latency_u
     printf("╚══════════════════════════════════════════════════════════════════╝\n");
     printf("\n");
 
+    // Verify HW timestamp support before starting
+    g_using_hw_timestamps = true;
+    printf("[HW_TS] Checking HW timestamp support...\n");
+    if (!check_hw_ts_support(LOOPBACK_PAIRS[0].tx_iface)) {
+        fprintf(stderr, "[WARN] HW timestamp not supported on %s - results may be inaccurate!\n",
+                LOOPBACK_PAIRS[0].tx_iface);
+        g_using_hw_timestamps = false;
+    }
+
     uint64_t max_latency_ns = (uint64_t)max_latency_us * 1000;
-    uint64_t start_time = get_time_ns();
+    (void)get_time_ns();  // Could be used for duration tracking in the future
     int result_idx = 0;
     int failed_count = 0;
     int passed_count = 0;
@@ -689,8 +877,9 @@ int emb_latency_run_loopback(int packet_count, int timeout_ms, int max_latency_u
             continue;
         }
 
-        // Wait for sockets to fully initialize
+        // Wait for sockets to initialize, then drain stale packets
         usleep(10000);  // 10ms
+        drain_rx_buffer(rx_fd);
 
         for (int v = 0; v < LOOPBACK_PAIRS[p].vlan_count; v++) {
             struct emb_latency_result *r = &g_emb_latency.loopback_results[result_idx];
@@ -706,7 +895,7 @@ int emb_latency_run_loopback(int packet_count, int timeout_ms, int max_latency_u
                 failed_count++;
             }
             result_idx++;
-            usleep(32);
+            precise_busy_wait_us(32);
         }
 
         close(tx_fd);
@@ -741,8 +930,17 @@ int emb_latency_run_unit_test(int packet_count, int timeout_ms, int max_latency_
     printf("╚══════════════════════════════════════════════════════════════════╝\n");
     printf("\n");
 
+    // Verify HW timestamp support before starting
+    g_using_hw_timestamps = true;
+    printf("[HW_TS] Checking HW timestamp support...\n");
+    if (!check_hw_ts_support(UNIT_TEST_PAIRS[0].tx_iface)) {
+        fprintf(stderr, "[WARN] HW timestamp not supported on %s - results may be inaccurate!\n",
+                UNIT_TEST_PAIRS[0].tx_iface);
+        g_using_hw_timestamps = false;
+    }
+
     uint64_t max_latency_ns = (uint64_t)max_latency_us * 1000;
-    uint64_t start_time = get_time_ns();
+    (void)get_time_ns();  // Could be used for duration tracking in the future
     int result_idx = 0;
     int failed_count = 0;
     int passed_count = 0;
@@ -764,8 +962,9 @@ int emb_latency_run_unit_test(int packet_count, int timeout_ms, int max_latency_
             continue;
         }
 
-        // Wait for sockets to fully initialize
+        // Wait for sockets to initialize, then drain stale packets
         usleep(10000);  // 10ms
+        drain_rx_buffer(rx_fd);
 
         for (int v = 0; v < UNIT_TEST_PAIRS[p].vlan_count; v++) {
             struct emb_latency_result *r = &g_emb_latency.unit_results[result_idx];
@@ -781,7 +980,7 @@ int emb_latency_run_unit_test(int packet_count, int timeout_ms, int max_latency_
                 failed_count++;
             }
             result_idx++;
-            usleep(32);
+            precise_busy_wait_us(32);
         }
 
         close(tx_fd);
@@ -796,7 +995,8 @@ int emb_latency_run_unit_test(int packet_count, int timeout_ms, int max_latency_
     // Print results table
     emb_latency_print_unit();
 
-    printf("Unit test complete: %d/%d passed\n\n", passed_count, result_idx);
+    printf("Unit test complete: %d/%d passed (Timestamp: %s)\n\n",
+           passed_count, result_idx, g_using_hw_timestamps ? "HARDWARE" : "SOFTWARE");
 
     return failed_count;
 }
@@ -1187,18 +1387,24 @@ static void print_results_table(const char *title, struct emb_latency_result *re
 }
 
 void emb_latency_print(void) {
-    print_results_table("LATENCY TEST RESULTS (Timestamp: HARDWARE NIC)",
-                        g_emb_latency.results, g_emb_latency.result_count);
+    char title[128];
+    snprintf(title, sizeof(title), "LATENCY TEST RESULTS (Timestamp: %s)",
+             g_using_hw_timestamps ? "HARDWARE NIC" : "SOFTWARE - INACCURATE!");
+    print_results_table(title, g_emb_latency.results, g_emb_latency.result_count);
 }
 
 void emb_latency_print_loopback(void) {
-    print_results_table("LOOPBACK TEST RESULTS (Switch Latency)",
-                        g_emb_latency.loopback_results, g_emb_latency.loopback_result_count);
+    char title[128];
+    snprintf(title, sizeof(title), "LOOPBACK TEST RESULTS (Switch Latency) [TS: %s]",
+             g_using_hw_timestamps ? "HW" : "SW!");
+    print_results_table(title, g_emb_latency.loopback_results, g_emb_latency.loopback_result_count);
 }
 
 void emb_latency_print_unit(void) {
-    print_results_table("UNIT TEST RESULTS (Device Latency)",
-                        g_emb_latency.unit_results, g_emb_latency.unit_result_count);
+    char title[128];
+    snprintf(title, sizeof(title), "UNIT TEST RESULTS (Device Latency) [TS: %s]",
+             g_using_hw_timestamps ? "HW" : "SW!");
+    print_results_table(title, g_emb_latency.unit_results, g_emb_latency.unit_result_count);
 }
 
 void emb_latency_print_summary(void) {
@@ -1234,8 +1440,10 @@ void emb_latency_print_combined(void) {
     printf("╚═══════════╩═══════════╩══════════════════╩══════════════════╩══════════════════╩═════════════╝\n");
     printf("\n");
     printf("Formula: Unit Latency = Total Latency - Switch Latency\n");
-    printf("Switch latency source: %s\n\n",
+    printf("Switch latency source: %s\n",
            g_emb_latency.loopback_skipped ? "Default (14 µs)" : "Measured (Loopback test)");
+    printf("Timestamp source: %s\n\n",
+           g_using_hw_timestamps ? "HARDWARE (NIC PTP clock)" : "SOFTWARE (kernel) - results may be ~10us higher!");
 }
 
 // ============================================
