@@ -1072,8 +1072,10 @@ void emb_latency_calculate_combined(void) {
         }
 
         // Calculate unit (device) latency
+        // Unit test path: NIC → Switch → DUT → Switch → NIC (2 switch traversals)
+        // Loopback measures 1 switch traversal, so subtract 2× switch
         if (c->total_measured) {
-            c->unit_latency_us = c->total_latency_us - c->switch_latency_us;
+            c->unit_latency_us = c->total_latency_us - 2.0 * c->switch_latency_us;
             if (c->unit_latency_us < 0) c->unit_latency_us = 0;
             c->unit_valid = true;
             c->passed = true;  // Adjust threshold as needed
@@ -1093,7 +1095,7 @@ int emb_latency_full_sequence(void) {
     printf("║         LATENCY TEST SEQUENCE                                    ║\n");
     printf("║  1. Loopback Test (Mellanox switch latency measurement)          ║\n");
     printf("║  2. Unit Test (Device latency: 0↔1, 2↔3, 4↔5, 6↔7)              ║\n");
-    printf("║  3. Combined Results (unit = total - switch)                     ║\n");
+    printf("║  3. Combined Results (unit = total - 2*switch)                   ║\n");
     printf("╚══════════════════════════════════════════════════════════════════╝\n");
     printf("\n");
 
@@ -1439,7 +1441,8 @@ void emb_latency_print_combined(void) {
 
     printf("╚═══════════╩═══════════╩══════════════════╩══════════════════╩══════════════════╩═════════════╝\n");
     printf("\n");
-    printf("Formula: Unit Latency = Total Latency - Switch Latency\n");
+    printf("Formula: Unit Latency = Total Latency - 2 x Switch Latency\n");
+    printf("  (Unit test path: NIC -> Switch -> DUT -> Switch -> NIC = 2 switch traversals)\n");
     printf("Switch latency source: %s\n",
            g_emb_latency.loopback_skipped ? "Default (14 µs)" : "Measured (Loopback test)");
     printf("Timestamp source: %s\n\n",
