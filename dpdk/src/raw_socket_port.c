@@ -1503,11 +1503,13 @@ void *raw_rx_worker(void *arg)
                         dpdk_ext_expected_seq_p12[vl_idx] = seq + 1;
                         dpdk_ext_seq_initialized_p12[vl_idx] = true;
                     } else {
-                        uint64_t expected = dpdk_ext_expected_seq_p12[vl_idx];
-                        if (seq > expected) {
-                            local_dpdk_lost += (seq - expected);
+                        // Multi-queue NOT: Port 12 RX has 4 queues (Q0-Q3).
+                        // NIC RSS distributes same VL-ID across queues → OOO.
+                        // Gap detection burada false positive verir.
+                        // Kayıp tespiti watermark-based (g_vl_seq) ile yapılır.
+                        if (seq >= dpdk_ext_expected_seq_p12[vl_idx]) {
+                            dpdk_ext_expected_seq_p12[vl_idx] = seq + 1;
                         }
-                        dpdk_ext_expected_seq_p12[vl_idx] = seq + 1;
                     }
                 }
             } else if (port->port_id == 13) {
@@ -1518,11 +1520,12 @@ void *raw_rx_worker(void *arg)
                         dpdk_ext_expected_seq_p13[vl_idx] = seq + 1;
                         dpdk_ext_seq_initialized_p13[vl_idx] = true;
                     } else {
-                        uint64_t expected = dpdk_ext_expected_seq_p13[vl_idx];
-                        if (seq > expected) {
-                            local_dpdk_lost += (seq - expected);
+                        // Multi-queue NOT: Port 13 RX has 2 queues.
+                        // Gap detection multi-queue OOO'da false positive verir.
+                        // Kayıp tespiti watermark-based (g_vl_seq) ile yapılır.
+                        if (seq >= dpdk_ext_expected_seq_p13[vl_idx]) {
+                            dpdk_ext_expected_seq_p13[vl_idx] = seq + 1;
                         }
-                        dpdk_ext_expected_seq_p13[vl_idx] = seq + 1;
                     }
                 }
             }
