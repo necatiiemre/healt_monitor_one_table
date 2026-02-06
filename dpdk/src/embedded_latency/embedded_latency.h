@@ -69,7 +69,7 @@ struct emb_combined_latency {
     double   total_latency_us;          // Total latency TX→RX (µs)
     bool     total_measured;            // true = measured
 
-    // Unit (device) latency = total - 2*switch (2 switch traversals in unit test path)
+    // Unit (device) latency = total - loopback (both paths have 2x switch, cancels out)
     double   unit_latency_us;           // Device latency (µs)
     bool     unit_valid;                // Calculation valid?
 
@@ -176,8 +176,8 @@ int emb_latency_run_loopback(int packet_count, int timeout_ms, int max_latency_u
 int emb_latency_run_unit_test(int packet_count, int timeout_ms, int max_latency_us);
 
 /**
- * Calculate combined latency (unit_latency = total - 2*switch)
- * Unit test path traverses switch twice: NIC->Switch->DUT->Switch->NIC
+ * Calculate combined latency (unit_latency = total - loopback)
+ * Both paths traverse switch twice, so switch cancels out.
  * Must be called after both loopback and unit tests complete
  */
 void emb_latency_calculate_combined(void);
